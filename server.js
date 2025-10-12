@@ -196,14 +196,31 @@ async function handleIncomingMessage(event) {
         const message = event.message;
         if (!message) return;
 
+        // DEBUG: Log ALL messages BEFORE filtering
+        console.log('📬 RAW MESSAGE (before filtering):', {
+            hasMedia: !!message.media,
+            mediaType: message.media?.className || 'none',
+            mimeType: message.media?.document?.mimeType || 'none',
+            hasText: !!message.text,
+            textSnippet: message.text?.substring(0, 50) || 'no text'
+        });
+
         // STEP 1: Check if message is from @Ebenozdownbot ONLY
         const sender = await message.getSender();
         const senderUsername = sender?.username || '';
+        const senderId = sender?.id?.toString() || 'unknown';
+
+        console.log('👤 Sender info:', {
+            username: senderUsername,
+            id: senderId,
+            botName: sender?.bot ? 'YES' : 'NO'
+        });
 
         const targetBotName = botUsername.replace('@', ''); // Remove @ from @Ebenozdownbot
 
         if (senderUsername !== targetBotName) {
-            // Ignore messages from other users/bots/chats
+            // Log WHY we're ignoring this message
+            console.log(`❌ IGNORED: Sender "${senderUsername}" !== "${targetBotName}"`);
             return;
         }
 
