@@ -213,7 +213,7 @@ async function handleIncomingMessage(event) {
         console.log('📬 RAW MESSAGE (before filtering):', {
             hasMedia: !!message.media,
             mediaType: message.media?.className || 'none',
-            mimeType: message.media?.document?.mimeType || 'none',
+            mimeType: message.media?.document?.mimeType || (message.media?.className === 'MessageMediaPhoto' ? 'photo' : 'none'),
             hasText: !!message.text,
             textSnippet: message.text?.substring(0, 50) || 'no text'
         });
@@ -294,14 +294,100 @@ async function handleIncomingMessage(event) {
         const waitingForMedia = pendingDownloads.size > 0 ||
             Array.from(downloadProgress.values()).some(p => !p.complete);
 
+        // SPECIAL: Log if bot sends media but we're not waiting (helps debug)
+        if (message.media && !waitingForMedia) {
+            console.log('⚠️ Bot sent media but we are not waiting for it:', {
+                mediaType: message.media.className,
+                waitingForMedia: waitingForMedia,
+                pendingDownloads: pendingDownloads.size,
+                activeProgress: Array.from(downloadProgress.values()).filter(p => !p.complete).length
+            });
+        }
+
         if (!waitingForMedia) {
             return; // Not expecting any media
         }
 
-        // STEP 4: Check if this message contains a video or audio
-        // NOTE: Bot often sends thumbnails/images before the actual video, so we need to filter those out
-        if (!message.media || !message.media.document) {
-            return; // No media here
+        // STEP 4: Check if this message contains media
+        // Bot can send media in TWO formats:
+        // 1. MessageMediaPhoto - for photos/images (Pinterest, Instagram photos, etc.)
+        // 2. MessageMediaDocument - for videos/audio/images as files
+
+        if (!message.media) {
+            return; // No media at all
+        }
+
+        const mediaClassName = message.media.className;
+        console.log('📬 Media received:', mediaClassName);
+
+        // Handle MessageMediaPhoto (photos/images sent as photos, not documents)
+        if (mediaClassName === 'MessageMediaPhoto') {
+            console.log('📸 Photo detected! Downloading...');
+
+            const fileName = `image_${Date.now()}.jpg`;
+            const filePath = path.join(__dirname, 'public', 'downloads', fileName);
+
+            // Create downloads directory
+            const downloadsDir = path.join(__dirname, 'public', 'downloads');
+            if (!fs.existsSync(downloadsDir)) {
+                fs.mkdirSync(downloadsDir, { recursive: true });
+            }
+
+            try {
+                // Download photo
+                const buffer = await client.downloadMedia(message.media, {
+                    workers: 16
+                });
+                fs.writeFileSync(filePath, buffer, { flag: 'w' });
+
+                const downloadInfo = {
+                    type: 'image',
+                    mediaType: 'image',
+                    fileName: fileName,
+                    url: `/downloads/${fileName}`,
+                    timestamp: Date.now()
+                };
+
+                console.log('✅ Photo downloaded successfully!');
+                console.log('📤 Sending to frontend:', downloadInfo);
+
+                // Resolve ALL pending requests
+                for (let [key, resolve] of pendingDownloads.entries()) {
+                    resolve(downloadInfo);
+                    pendingDownloads.delete(key);
+                }
+
+                // Update ALL active progress entries
+                for (let [key, value] of downloadProgress.entries()) {
+                    if (!value.complete) {
+                        value.progress = 100;
+                        value.complete = true;
+                        value.success = true;
+                        value.videoUrl = downloadInfo.url;
+                        value.fileName = downloadInfo.fileName;
+                        value.mediaType = downloadInfo.mediaType;
+                    }
+                }
+
+                return; // Done processing photo
+
+            } catch (error) {
+                console.error('❌ Photo download failed:', error);
+
+                // Mark all as failed
+                for (let [key, resolve] of pendingDownloads.entries()) {
+                    resolve(null);
+                    pendingDownloads.delete(key);
+                }
+
+                return;
+            }
+        }
+
+        // Handle MessageMediaDocument (videos, audio, images as documents)
+        if (!message.media.document) {
+            console.log('⚠️ Media is not a photo or document, ignoring');
+            return; // Not a document
         }
 
         const mimeType = message.media.document.mimeType || '';
