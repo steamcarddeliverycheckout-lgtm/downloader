@@ -466,11 +466,13 @@ app.post('/api/youtube/formats', async (req, res) => {
         const result = await formatPromise;
 
         if (result && result.type === 'formats') {
+            console.log(`✅ Sending ${result.formats.length} formats to frontend:`, result.formats);
             res.json({
                 success: true,
                 formats: result.formats
             });
         } else {
+            console.warn('⚠️ No formats received, sending timeout error to frontend');
             res.status(408).json({ error: 'Timeout waiting for formats from bot' });
         }
 

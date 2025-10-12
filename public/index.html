@@ -428,6 +428,8 @@
             try {
                 // Check if YouTube URL
                 if (isYouTubeUrl(url)) {
+                    console.log('YouTube URL detected, requesting formats...');
+
                     // Request formats from backend
                     const response = await fetch('/api/youtube/formats', {
                         method: 'POST',
@@ -437,9 +439,12 @@
                         body: JSON.stringify({ url })
                     });
 
+                    console.log('Response status:', response.status);
                     const data = await response.json();
+                    console.log('Response data:', data);
 
                     if (data.success && data.formats) {
+                        console.log(`Received ${data.formats.length} formats:`, data.formats);
                         availableFormats = data.formats;
                         hideLoading();
                         showFormatSelection(data.formats);
@@ -483,10 +488,17 @@
 
         // Show format selection UI
         function showFormatSelection(formats) {
+            console.log('showFormatSelection called with formats:', formats);
             const formatGrid = document.getElementById('formatGrid');
             formatGrid.innerHTML = '';
 
+            if (!formats || formats.length === 0) {
+                console.error('No formats provided to showFormatSelection!');
+                return;
+            }
+
             formats.forEach((format, index) => {
+                console.log(`Creating button for format ${index}:`, format);
                 const formatBtn = document.createElement('div');
                 formatBtn.className = 'format-btn';
                 formatBtn.onclick = () => selectFormat(index);
@@ -497,7 +509,9 @@
                 formatGrid.appendChild(formatBtn);
             });
 
+            console.log('Setting formatSelection to active...');
             document.getElementById('formatSelection').classList.add('active');
+            console.log('Format selection UI should now be visible');
         }
 
         // Select a format
