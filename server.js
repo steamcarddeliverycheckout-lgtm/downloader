@@ -26,6 +26,8 @@ let client;
 let pendingDownloads = new Map();
 let isConnected = false;
 let reconnectTimeout = null;
+let youtubeFormats = new Map(); // Store YouTube formats by URL
+let downloadProgress = new Map(); // Store download progress by request ID
 
 // Optimized download function with DC migration support
 async function fastDownloadMedia(client, media, filePath) {
@@ -176,6 +178,45 @@ async function handleIncomingMessage(event) {
         const sender = await message.getSender();
         if (sender && sender.username === botUsername.replace('@', '')) {
 
+            // Check if it's a text message with format information
+            if (message.text) {
+                const text = message.text;
+
+                // Check if it's YouTube format list
+                if (text.includes('📹') && (text.includes('1080p') || text.includes('720p') || text.includes('480p'))) {
+                    console.log('📋 YouTube formats received from bot!');
+
+                    // Parse formats from message
+                    const formats = parseYouTubeFormats(text);
+
+                    // Store formats temporarily (associate with last request)
+                    for (let [key, resolve] of pendingDownloads.entries()) {
+                        resolve({ type: 'formats', formats: formats });
+                        pendingDownloads.delete(key);
+                        break;
+                    }
+                    return;
+                }
+
+                // Check if it's a progress message
+                if (text.includes('📥 Downloading:') || text.includes('■')) {
+                    console.log('⏬ Download progress:', text);
+
+                    // Parse progress percentage
+                    const progressMatch = text.match(/(\d+)%/);
+                    if (progressMatch) {
+                        const progress = parseInt(progressMatch[1]);
+
+                        // Update progress for all active downloads
+                        for (let [key, value] of downloadProgress.entries()) {
+                            value.progress = progress;
+                            value.status = `Downloading: ${progress}%`;
+                        }
+                    }
+                    return;
+                }
+            }
+
             // Check if message has video
             if (message.media && message.media.document) {
                 const attributes = message.media.document.attributes || [];
@@ -201,6 +242,7 @@ async function handleIncomingMessage(event) {
 
                         // Store the download info
                         const downloadInfo = {
+                            type: 'video',
                             fileName: fileName,
                             url: `/downloads/${fileName}`,
                             timestamp: Date.now()
@@ -211,6 +253,15 @@ async function handleIncomingMessage(event) {
                             resolve(downloadInfo);
                             pendingDownloads.delete(key);
                             break;
+                        }
+
+                        // Mark all progress as complete
+                        for (let [key, value] of downloadProgress.entries()) {
+                            value.progress = 100;
+                            value.complete = true;
+                            value.success = true;
+                            value.videoUrl = downloadInfo.url;
+                            value.fileName = downloadInfo.fileName;
                         }
                     } catch (downloadError) {
                         console.error('❌ Error during download:', downloadError);
@@ -226,6 +277,13 @@ async function handleIncomingMessage(event) {
                             resolve(null);
                             pendingDownloads.delete(key);
                         }
+
+                        // Mark progress as failed
+                        for (let [key, value] of downloadProgress.entries()) {
+                            value.complete = true;
+                            value.success = false;
+                            value.error = 'Download failed';
+                        }
                     }
                 }
             }
@@ -233,6 +291,34 @@ async function handleIncomingMessage(event) {
     } catch (error) {
         console.error('Error handling message:', error);
     }
+}
+
+// Parse YouTube formats from bot message
+function parseYouTubeFormats(text) {
+    const formats = [];
+
+    // Common format patterns
+    const formatPatterns = [
+        { regex: /1080p:\s*(\d+MB)/i, quality: '1080p' },
+        { regex: /720p:\s*(\d+MB)/i, quality: '720p' },
+        { regex: /480p:\s*(\d+MB)/i, quality: '480p' },
+        { regex: /360p:\s*(\d+MB)/i, quality: '360p' },
+        { regex: /240p:\s*(\d+MB)/i, quality: '240p' },
+        { regex: /144p:\s*(\d+MB)/i, quality: '144p' },
+        { regex: /MP3:\s*(\d+MB)/i, quality: 'MP3' }
+    ];
+
+    formatPatterns.forEach(pattern => {
+        const match = text.match(pattern.regex);
+        if (match) {
+            formats.push({
+                quality: pattern.quality,
+                size: match[1]
+            });
+        }
+    });
+
+    return formats;
 }
 
 // API endpoint to send link to bot
@@ -314,6 +400,164 @@ app.get('/api/health', (req, res) => {
         status: 'ok',
         telegram: isConnected ? 'connected' : 'disconnected'
     });
+});
+
+// YouTube formats endpoint
+app.post('/api/youtube/formats', async (req, res) => {
+    const { url } = req.body;
+
+    if (!url) {
+        return res.status(400).json({ error: 'URL is required' });
+    }
+
+    // Check if Telegram is connected
+    if (!client || !isConnected) {
+        return res.status(503).json({ error: 'Telegram client not connected. Please wait...' });
+    }
+
+    try {
+        // Find bot entity
+        let bot;
+        let retries = 3;
+        while (retries > 0) {
+            try {
+                bot = await client.getEntity(botUsername);
+                break;
+            } catch (error) {
+                console.error(`Failed to get bot entity, retries left: ${retries - 1}`);
+                retries--;
+                if (retries === 0) throw error;
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+        }
+
+        // Send YouTube URL to bot
+        await client.sendMessage(bot, { message: url });
+        console.log(`📤 Sent YouTube URL to bot: ${url}`);
+
+        // Wait for format response
+        const formatPromise = new Promise((resolve) => {
+            const requestId = Date.now();
+            pendingDownloads.set(requestId, resolve);
+
+            // Timeout after 30 seconds
+            setTimeout(() => {
+                if (pendingDownloads.has(requestId)) {
+                    pendingDownloads.delete(requestId);
+                    resolve(null);
+                }
+            }, 30000);
+        });
+
+        const result = await formatPromise;
+
+        if (result && result.type === 'formats') {
+            res.json({
+                success: true,
+                formats: result.formats
+            });
+        } else {
+            res.status(408).json({ error: 'Timeout waiting for formats from bot' });
+        }
+
+    } catch (error) {
+        console.error('Error in YouTube formats endpoint:', error);
+        res.status(500).json({ error: 'Failed to get formats: ' + error.message });
+    }
+});
+
+// YouTube download endpoint
+app.post('/api/youtube/download', async (req, res) => {
+    const { url, format } = req.body;
+
+    if (!url || !format) {
+        return res.status(400).json({ error: 'URL and format are required' });
+    }
+
+    // Check if Telegram is connected
+    if (!client || !isConnected) {
+        return res.status(503).json({ error: 'Telegram client not connected. Please wait...' });
+    }
+
+    try {
+        // Find bot entity
+        let bot;
+        let retries = 3;
+        while (retries > 0) {
+            try {
+                bot = await client.getEntity(botUsername);
+                break;
+            } catch (error) {
+                console.error(`Failed to get bot entity, retries left: ${retries - 1}`);
+                retries--;
+                if (retries === 0) throw error;
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+        }
+
+        // Create progress tracking
+        const requestId = Date.now();
+        downloadProgress.set(requestId, {
+            progress: 0,
+            status: 'Starting download...',
+            complete: false,
+            success: false
+        });
+
+        // Send format selection to bot (bot should understand format button click)
+        await client.sendMessage(bot, { message: format });
+        console.log(`📤 Sent format selection to bot: ${format}`);
+
+        // Return immediately - client will poll for progress
+        res.json({
+            success: true,
+            requestId: requestId
+        });
+
+        // Wait for video in background
+        const downloadPromise = new Promise((resolve) => {
+            pendingDownloads.set(requestId, resolve);
+
+            // Timeout after 120 seconds
+            setTimeout(() => {
+                if (pendingDownloads.has(requestId)) {
+                    pendingDownloads.delete(requestId);
+                    resolve(null);
+                }
+            }, 120000);
+        });
+
+        await downloadPromise;
+
+    } catch (error) {
+        console.error('Error in YouTube download endpoint:', error);
+        res.status(500).json({ error: 'Failed to start download: ' + error.message });
+    }
+});
+
+// YouTube progress endpoint
+app.get('/api/youtube/progress/:id', (req, res) => {
+    const requestId = parseInt(req.params.id);
+
+    if (downloadProgress.has(requestId)) {
+        const progress = downloadProgress.get(requestId);
+        res.json(progress);
+
+        // Clean up completed requests after 60 seconds
+        if (progress.complete) {
+            setTimeout(() => {
+                downloadProgress.delete(requestId);
+            }, 60000);
+        }
+    } else {
+        res.json({
+            progress: 0,
+            status: 'Unknown request',
+            complete: true,
+            success: false,
+            error: 'Request not found'
+        });
+    }
 });
 
 // Start server
