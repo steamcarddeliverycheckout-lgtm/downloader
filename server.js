@@ -1,8 +1,8 @@
 require('dotenv').config();
 const express = require('express');
-const { TelegramClient } = require('telegram');
+const { TelegramClient, Api } = require('telegram');
 const { StringSession } = require('telegram/sessions');
-const { NewMessage } = require('telegram/events');
+const { NewMessage, Raw } = require('telegram/events');
 const input = require('input');
 const path = require('path');
 const fs = require('fs');
@@ -30,12 +30,8 @@ let downloadProgress = new Map(); // Store download progress by request ID
 let lastFormatMessage = null; // Store the last bot message with format buttons
 
 // Optimized download function with DC migration support
-async function fastDownloadMedia(client, fileEntity, filePath) {
-    // Support raw Document, MessageMedia.document, or WebPage.document
-    const doc = (fileEntity && fileEntity.document)
-        ? fileEntity.document
-        : fileEntity;
-    const fileSize = (doc && doc.size) ? doc.size : 0;
+async function fastDownloadMedia(client, media, filePath) {
+    const fileSize = media.document.size;
     const startTime = Date.now();
     let lastLogTime = startTime;
     let lastProgress = 0;
@@ -44,7 +40,7 @@ async function fastDownloadMedia(client, fileEntity, filePath) {
 
     try {
         // Download to buffer first with maximum workers (faster than streaming to disk)
-        const buffer = await client.downloadMedia(doc || fileEntity, {
+        const buffer = await client.downloadMedia(media, {
             workers: 32,  // Increased to maximum
             progressCallback: (downloaded, total) => {
                 const now = Date.now();
@@ -125,6 +121,26 @@ async function initTelegram() {
         // Listen for ALL incoming messages (including edited ones)
         // NewMessage event catches both new and edited messages in gramJS
         client.addEventHandler(handleIncomingMessage, new NewMessage({}));
+
+        // CRITICAL: Also listen for EDITED messages via Raw events
+        // Bot edits "📥 Downloading..." message and replaces it with video
+        client.addEventHandler(async (update) => {
+            try {
+                // Check if this is an edit message update
+                if (update instanceof Api.UpdateEditMessage ||
+                    update instanceof Api.UpdateEditChannelMessage) {
+                    console.log('🔄 EDIT EVENT detected!');
+
+                    // Extract the edited message
+                    const message = update.message;
+
+                    // Pass to our handler as if it's a new message event
+                    await handleIncomingMessage({ message });
+                }
+            } catch (error) {
+                console.error('❌ Error in Raw event handler:', error);
+            }
+        }, new Raw({}));
 
         console.log('🎧 Listening to ALL messages (new + edited) from ALL chats');
 
@@ -252,29 +268,15 @@ async function handleIncomingMessage(event) {
             return; // Not expecting any video
         }
 
-        // STEP 4: Check if this message contains a video (Document or WebPage.document)
-        if (!message.media) {
-            return; // No media at all
+        // STEP 4: Check if this message contains a video
+        if (!message.media || !message.media.document) {
+            return; // No video here
         }
 
-        const media = message.media;
-        const doc = media.document || (media.webpage && media.webpage.document) || null;
-        if (!doc) {
-            return; // No downloadable document here
-        }
-
-        const mimeType = doc.mimeType || '';
-        const attributes = doc.attributes || [];
-
-        // Determine if the document is likely a video
-        const hasVideoAttribute = attributes.some(attr => attr.className === 'DocumentAttributeVideo');
-        const filenameAttr = attributes.find(attr => attr.className === 'DocumentAttributeFilename');
-        const fileNameFromAttr = filenameAttr && filenameAttr.fileName ? filenameAttr.fileName : '';
-        const fileExtFromAttr = fileNameFromAttr ? path.extname(fileNameFromAttr).toLowerCase() : '';
-        const allowedVideoExts = new Set(['.mp4', '.webm', '.mov', '.mkv']);
-        const isMimeVideo = (mimeType || '').toLowerCase().includes('video');
-        const isFileNameVideo = allowedVideoExts.has(fileExtFromAttr);
-        const isVideo = hasVideoAttribute || isMimeVideo || isFileNameVideo;
+        const mimeType = message.media.document.mimeType || '';
+        const attributes = message.media.document.attributes || [];
+        const isVideo = attributes.some(attr => attr.className === 'DocumentAttributeVideo') ||
+                        mimeType.includes('video');
 
         if (!isVideo) {
             return; // Not a video
@@ -282,13 +284,11 @@ async function handleIncomingMessage(event) {
 
         // STEP 5: WE HAVE A VIDEO FROM @Ebenozdownbot - DOWNLOAD IT!
         console.log('🎯 VIDEO FOUND from @Ebenozdownbot! Starting download...');
-        console.log(`📦 Size: ${(doc.size / 1024 / 1024).toFixed(2)} MB`);
+        console.log(`📦 Size: ${(message.media.document.size / 1024 / 1024).toFixed(2)} MB`);
 
-        // Get file extension (prefer from filename attribute)
+        // Get file extension
         let fileExt = '.mp4';
-        if (fileExtFromAttr && allowedVideoExts.has(fileExtFromAttr)) {
-            fileExt = fileExtFromAttr;
-        } else if (mimeType.includes('video/webm')) fileExt = '.webm';
+        if (mimeType.includes('video/webm')) fileExt = '.webm';
         else if (mimeType.includes('video/mp4')) fileExt = '.mp4';
         else if (mimeType.includes('video/quicktime')) fileExt = '.mov';
 
@@ -303,7 +303,7 @@ async function handleIncomingMessage(event) {
 
         try {
             // Download the video
-            await fastDownloadMedia(client, doc, filePath);
+            await fastDownloadMedia(client, message.media, filePath);
 
             const downloadInfo = {
                 type: 'video',
@@ -363,29 +363,26 @@ async function handleIncomingMessage(event) {
 function parseYouTubeFormats(text) {
     const formats = [];
 
-    // Robust multi-match regex: finds quality and size with or without colon, allows spaces in size
-    // Examples matched: "144p : 1MB", "🎬 144p 💾 1 MB", "MP3 - 2MB"
-    const qualityRegex = /(1080p|720p|480p|360p|240p|144p|MP3)/gi;
-    const sizeAfterRegex = new RegExp(
-        /(1080p|720p|480p|360p|240p|144p|MP3)[^\n\r]*?(?:\:)?[^\d]*(\d+)\s*(KB|MB|GB)/gi
-    );
+    // Common format patterns (updated to handle extra spaces before and after colon)
+    const formatPatterns = [
+        { regex: /1080p\s*:\s*(\d+MB)/i, quality: '1080p' },
+        { regex: /720p\s*:\s*(\d+MB)/i, quality: '720p' },
+        { regex: /480p\s*:\s*(\d+MB)/i, quality: '480p' },
+        { regex: /360p\s*:\s*(\d+MB)/i, quality: '360p' },
+        { regex: /240p\s*:\s*(\d+MB)/i, quality: '240p' },
+        { regex: /144p\s*:\s*(\d+MB)/i, quality: '144p' },
+        { regex: /MP3\s*:\s*(\d+MB)/i, quality: 'MP3' }
+    ];
 
-    // Prefer the combined regex to extract all entries in one pass
-    const matches = Array.from(text.matchAll(sizeAfterRegex));
-    if (matches.length > 0) {
-        for (const m of matches) {
-            const quality = m[1].toUpperCase();
-            const sizeNum = m[2];
-            const unit = m[3].toUpperCase();
-            formats.push({ quality, size: `${sizeNum}${unit}` });
+    formatPatterns.forEach(pattern => {
+        const match = text.match(pattern.regex);
+        if (match) {
+            formats.push({
+                quality: pattern.quality,
+                size: match[1]
+            });
         }
-    } else {
-        // Fallback: if sizes not found, at least list available qualities without sizes
-        const quals = Array.from(new Set((text.match(qualityRegex) || []).map(q => q.toUpperCase())));
-        for (const q of quals) {
-            formats.push({ quality: q, size: '?' });
-        }
-    }
+    });
 
     console.log(`📋 Parsed ${formats.length} formats from bot message`);
     return formats;
@@ -593,72 +590,41 @@ app.post('/api/youtube/download', async (req, res) => {
             let buttonClicked = false;
 
             // Find and click the button matching the format
-            let lastError = null;
-            for (let i = 0; i < buttons.length && !buttonClicked; i++) {
-                const row = buttons[i];
-                for (let j = 0; j < row.buttons.length && !buttonClicked; j++) {
-                    const button = row.buttons[j];
+            for (let row of buttons) {
+                for (let button of row.buttons) {
                     const buttonText = button.text || '';
                     console.log(`🔍 Checking button: "${buttonText}"`);
-                    if (!buttonText.includes(format)) {
-                        continue;
-                    }
 
-                    console.log(`✅ Found matching button: "${buttonText}"`);
+                    // Check if button text matches the format (e.g., "1080p", "720p")
+                    if (buttonText.includes(format)) {
+                        console.log(`✅ Found matching button: "${buttonText}"`);
 
-                    // Try clicking by index first
-                    try {
-                        await lastFormatMessage.click({ i: i, j: j });
-                        console.log(`🖱️ Clicked button (by index) for ${format}`);
+                        // Click the button
+                        await lastFormatMessage.click({ data: button.data });
+                        console.log(`🖱️ Clicked button for ${format}`);
                         buttonClicked = true;
-                    } catch (eByIndex) {
-                        lastError = eByIndex;
-                        console.warn('⚠️ Click by index failed:', eByIndex.message || eByIndex);
 
-                        // Try payload data
-                        try {
-                            await lastFormatMessage.click({ data: button.data });
-                            console.log(`🖱️ Clicked button (by data) for ${format}`);
-                            buttonClicked = true;
-                        } catch (eByData) {
-                            lastError = eByData;
-                            console.warn('⚠️ Click by data failed:', eByData.message || eByData);
-
-                            // Try by text
-                            try {
-                                await lastFormatMessage.click({ text: buttonText });
-                                console.log(`🖱️ Clicked button (by text) for ${format}`);
-                                buttonClicked = true;
-                            } catch (eByText) {
-                                lastError = eByText;
-                                console.warn('⚠️ Click by text failed:', eByText.message || eByText);
-                            }
+                        // Update progress status
+                        if (downloadProgress.has(requestId)) {
+                            downloadProgress.get(requestId).progress = 10;
+                            downloadProgress.get(requestId).status = `Processing ${format} video...`;
                         }
-                    }
 
-                    if (buttonClicked && downloadProgress.has(requestId)) {
-                        downloadProgress.get(requestId).progress = 10;
-                        downloadProgress.get(requestId).status = `Processing ${format} video...`;
+                        break;
                     }
                 }
+                if (buttonClicked) break;
             }
 
             if (!buttonClicked) {
-                console.error(`❌ Could not click button for format: ${format}`);
+                console.warn(`⚠️ Could not find button for format: ${format}`);
                 console.log('Available buttons:', buttons.map(row =>
                     row.buttons.map(b => b.text).join(', ')
                 ).join(' | '));
 
-                if (downloadProgress.has(requestId)) {
-                    downloadProgress.get(requestId).complete = true;
-                    downloadProgress.get(requestId).success = false;
-                    downloadProgress.get(requestId).error = lastError ? `Failed to click format button: ${lastError.message || lastError}` : 'Failed to click format button';
-                }
-
-                return res.status(500).json({
-                    success: false,
-                    error: 'Could not select the requested format automatically. Please try again.'
-                });
+                // Fallback: send text message
+                console.log('📤 Falling back to text message');
+                await client.sendMessage(bot, { message: format });
             }
         } catch (clickError) {
             console.error('❌ Error clicking button:', clickError);
