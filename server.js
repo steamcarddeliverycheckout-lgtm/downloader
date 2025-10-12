@@ -131,11 +131,33 @@ async function initTelegram() {
                     update instanceof Api.UpdateEditChannelMessage) {
                     console.log('🔄 EDIT EVENT detected!');
 
-                    // Extract the edited message
-                    const message = update.message;
+                    // Get message ID and peer from update
+                    const messageId = update.message?.id;
+                    const peer = update.message?.peerId;
 
-                    // Pass to our handler as if it's a new message event
-                    await handleIncomingMessage({ message });
+                    if (!messageId || !peer) {
+                        console.log('⚠️ Edit event missing message ID or peer');
+                        return;
+                    }
+
+                    try {
+                        // Fetch the FULL message with all details using getMessages
+                        const messages = await client.getMessages(peer, {
+                            ids: [messageId]
+                        });
+
+                        if (messages && messages.length > 0) {
+                            const fullMessage = messages[0];
+                            console.log('✅ Fetched full message for edit event');
+
+                            // Pass to our handler with full message data
+                            await handleIncomingMessage({ message: fullMessage });
+                        } else {
+                            console.log('⚠️ Could not fetch full message');
+                        }
+                    } catch (fetchError) {
+                        console.error('❌ Error fetching full message:', fetchError.message);
+                    }
                 }
             } catch (error) {
                 console.error('❌ Error in Raw event handler:', error);
