@@ -235,18 +235,47 @@ async function handleIncomingMessage(event) {
                 }
             }
 
+            // Check if message has ANY media (not just video)
+            if (message.media) {
+                console.log('📦 Media received from bot! Type:', message.media.className);
+
+                // Log all media properties for debugging
+                if (message.media.document) {
+                    console.log('📄 Document details:', {
+                        mimeType: message.media.document.mimeType,
+                        size: (message.media.document.size / 1024 / 1024).toFixed(2) + ' MB',
+                        attributes: message.media.document.attributes?.map(attr => attr.className) || []
+                    });
+                }
+            }
+
             // Check if message has video
             if (message.media && message.media.document) {
                 const attributes = message.media.document.attributes || [];
+
+                // Accept both videos AND files (bot might send as file)
                 const isVideo = attributes.some(attr =>
                     attr.className === 'DocumentAttributeVideo'
                 );
+                const isFile = attributes.some(attr =>
+                    attr.className === 'DocumentAttributeFilename'
+                );
+                const mimeType = message.media.document.mimeType || '';
+                const isVideoMime = mimeType.includes('video');
 
-                if (isVideo) {
+                console.log('🔍 Media check:', { isVideo, isFile, isVideoMime, mimeType });
+
+                if (isVideo || isVideoMime) {
                     console.log('📹 Video received from bot!');
 
+                    // Get proper file extension from mime type
+                    let fileExt = '.mp4';
+                    if (mimeType.includes('video/webm')) fileExt = '.webm';
+                    else if (mimeType.includes('video/mp4')) fileExt = '.mp4';
+                    else if (mimeType.includes('video/quicktime')) fileExt = '.mov';
+
                     // Save video temporarily
-                    const fileName = `video_${Date.now()}.mp4`;
+                    const fileName = `video_${Date.now()}${fileExt}`;
                     const filePath = path.join(__dirname, 'public', 'downloads', fileName);
 
                     // Create downloads directory if it doesn't exist
@@ -610,13 +639,27 @@ app.post('/api/youtube/download', async (req, res) => {
             // Timeout after 120 seconds
             setTimeout(() => {
                 if (pendingDownloads.has(requestId)) {
+                    console.error(`⏱️ Timeout waiting for video (requestId: ${requestId})`);
                     pendingDownloads.delete(requestId);
+
+                    // Mark as failed in progress
+                    if (downloadProgress.has(requestId)) {
+                        downloadProgress.get(requestId).complete = true;
+                        downloadProgress.get(requestId).success = false;
+                        downloadProgress.get(requestId).error = 'Download timeout - bot did not send video';
+                        console.log(`❌ Marked request ${requestId} as failed due to timeout`);
+                    }
+
                     resolve(null);
                 }
             }, 120000);
         });
 
-        await downloadPromise;
+        const result = await downloadPromise;
+
+        if (!result) {
+            console.error(`❌ Download failed or timed out for requestId: ${requestId}`);
+        }
 
     } catch (error) {
         console.error('Error in YouTube download endpoint:', error);
