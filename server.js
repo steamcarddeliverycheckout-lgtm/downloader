@@ -176,15 +176,25 @@ async function handleIncomingMessage(event) {
         const message = event.message;
         if (!message) return;
 
-        // LOG MESSAGE INFO
-        console.log('📬 MESSAGE:', {
+        // STEP 1: Check if message is from @Ebenozdownbot ONLY
+        const sender = await message.getSender();
+        const senderUsername = sender?.username || '';
+
+        const targetBotName = botUsername.replace('@', ''); // Remove @ from @Ebenozdownbot
+
+        if (senderUsername !== targetBotName) {
+            // Ignore messages from other users/bots/chats
+            return;
+        }
+
+        console.log('✅ Message from @Ebenozdownbot:', {
             hasMedia: !!message.media,
             mediaType: message.media?.className || 'none',
             hasText: !!message.text,
             textPreview: message.text?.substring(0, 80) || ''
         });
 
-        // STEP 1: Check for YouTube format list (text messages with format options)
+        // STEP 2: Check for YouTube format list (text messages with format options)
         if (message.text) {
             const text = message.text;
 
@@ -229,7 +239,7 @@ async function handleIncomingMessage(event) {
             }
         }
 
-        // STEP 2: Check if we're waiting for a video download
+        // STEP 3: Check if we're waiting for a video download
         const waitingForVideo = pendingDownloads.size > 0 ||
             Array.from(downloadProgress.values()).some(p => !p.complete);
 
@@ -237,7 +247,7 @@ async function handleIncomingMessage(event) {
             return; // Not expecting any video
         }
 
-        // STEP 3: Check if this message contains a video
+        // STEP 4: Check if this message contains a video
         if (!message.media || !message.media.document) {
             return; // No video here
         }
@@ -251,8 +261,8 @@ async function handleIncomingMessage(event) {
             return; // Not a video
         }
 
-        // STEP 4: WE HAVE A VIDEO AND WE'RE WAITING FOR IT - DOWNLOAD IT!
-        console.log('🎯 VIDEO FOUND! Starting download...');
+        // STEP 5: WE HAVE A VIDEO FROM @Ebenozdownbot - DOWNLOAD IT!
+        console.log('🎯 VIDEO FOUND from @Ebenozdownbot! Starting download...');
         console.log(`📦 Size: ${(message.media.document.size / 1024 / 1024).toFixed(2)} MB`);
 
         // Get file extension
