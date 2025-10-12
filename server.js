@@ -593,61 +593,72 @@ app.post('/api/youtube/download', async (req, res) => {
             let buttonClicked = false;
 
             // Find and click the button matching the format
-            let rowIndex = 0;
-            let colIndex = 0;
-            let selectedButtonText = '';
+            let lastError = null;
             for (let i = 0; i < buttons.length && !buttonClicked; i++) {
                 const row = buttons[i];
                 for (let j = 0; j < row.buttons.length && !buttonClicked; j++) {
                     const button = row.buttons[j];
                     const buttonText = button.text || '';
                     console.log(`🔍 Checking button: "${buttonText}"`);
-                    if (buttonText.includes(format)) {
-                        console.log(`✅ Found matching button: "${buttonText}"`);
-                        rowIndex = i;
-                        colIndex = j;
-                        selectedButtonText = buttonText;
-                        // Try clicking by position first
+                    if (!buttonText.includes(format)) {
+                        continue;
+                    }
+
+                    console.log(`✅ Found matching button: "${buttonText}"`);
+
+                    // Try clicking by index first
+                    try {
+                        await lastFormatMessage.click({ i: i, j: j });
+                        console.log(`🖱️ Clicked button (by index) for ${format}`);
+                        buttonClicked = true;
+                    } catch (eByIndex) {
+                        lastError = eByIndex;
+                        console.warn('⚠️ Click by index failed:', eByIndex.message || eByIndex);
+
+                        // Try payload data
                         try {
-                            await lastFormatMessage.click({ i: rowIndex, j: colIndex });
-                            console.log(`🖱️ Clicked button (by index) for ${format}`);
+                            await lastFormatMessage.click({ data: button.data });
+                            console.log(`🖱️ Clicked button (by data) for ${format}`);
                             buttonClicked = true;
-                        } catch (e1) {
-                            // Try clicking by data payload
+                        } catch (eByData) {
+                            lastError = eByData;
+                            console.warn('⚠️ Click by data failed:', eByData.message || eByData);
+
+                            // Try by text
                             try {
-                                await lastFormatMessage.click({ data: button.data });
-                                console.log(`🖱️ Clicked button (by data) for ${format}`);
+                                await lastFormatMessage.click({ text: buttonText });
+                                console.log(`🖱️ Clicked button (by text) for ${format}`);
                                 buttonClicked = true;
-                            } catch (e2) {
-                                // Try clicking by text
-                                try {
-                                    await lastFormatMessage.click({ text: buttonText });
-                                    console.log(`🖱️ Clicked button (by text) for ${format}`);
-                                    buttonClicked = true;
-                                } catch (e3) {
-                                    // Will fallback below
-                                }
+                            } catch (eByText) {
+                                lastError = eByText;
+                                console.warn('⚠️ Click by text failed:', eByText.message || eByText);
                             }
                         }
+                    }
 
-                        if (buttonClicked && downloadProgress.has(requestId)) {
-                            downloadProgress.get(requestId).progress = 10;
-                            downloadProgress.get(requestId).status = `Processing ${format} video...`;
-                        }
+                    if (buttonClicked && downloadProgress.has(requestId)) {
+                        downloadProgress.get(requestId).progress = 10;
+                        downloadProgress.get(requestId).status = `Processing ${format} video...`;
                     }
                 }
             }
 
             if (!buttonClicked) {
-                console.warn(`⚠️ Could not find/click button for format: ${format}`);
+                console.error(`❌ Could not click button for format: ${format}`);
                 console.log('Available buttons:', buttons.map(row =>
                     row.buttons.map(b => b.text).join(', ')
                 ).join(' | '));
 
-                // Fallback: send the exact button text if we matched one; else send the format label
-                const fallbackText = selectedButtonText || format;
-                console.log('📤 Falling back to text message:', fallbackText);
-                await client.sendMessage(bot, { message: fallbackText });
+                if (downloadProgress.has(requestId)) {
+                    downloadProgress.get(requestId).complete = true;
+                    downloadProgress.get(requestId).success = false;
+                    downloadProgress.get(requestId).error = lastError ? `Failed to click format button: ${lastError.message || lastError}` : 'Failed to click format button';
+                }
+
+                return res.status(500).json({
+                    success: false,
+                    error: 'Could not select the requested format automatically. Please try again.'
+                });
             }
         } catch (clickError) {
             console.error('❌ Error clicking button:', clickError);
