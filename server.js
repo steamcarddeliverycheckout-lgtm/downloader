@@ -28,6 +28,7 @@ let isConnected = false;
 let reconnectTimeout = null;
 let youtubeFormats = new Map(); // Store YouTube formats by URL
 let downloadProgress = new Map(); // Store download progress by request ID
+let lastFormatMessage = null; // Store the last bot message with format buttons
 
 // Optimized download function with DC migration support
 async function fastDownloadMedia(client, media, filePath) {
@@ -192,6 +193,10 @@ async function handleIncomingMessage(event) {
 
                 if (isFormatList) {
                     console.log('📋 YouTube formats detected in message!');
+
+                    // Store the message for later button clicking
+                    lastFormatMessage = message;
+                    console.log('💾 Stored format message for button clicking');
 
                     // Parse formats from message
                     const formats = parseYouTubeFormats(text);
@@ -520,9 +525,57 @@ app.post('/api/youtube/download', async (req, res) => {
             success: false
         });
 
-        // Send format selection to bot (bot should understand format button click)
-        await client.sendMessage(bot, { message: format });
-        console.log(`📤 Sent format selection to bot: ${format}`);
+        // Check if we have the format message with buttons
+        if (!lastFormatMessage) {
+            console.error('❌ No format message stored, cannot click button');
+            return res.status(400).json({ error: 'No format selection available. Please try again.' });
+        }
+
+        console.log(`🔘 Attempting to click button for format: ${format}`);
+
+        try {
+            // Get the inline keyboard from the message
+            const buttons = lastFormatMessage.replyMarkup?.rows || [];
+            console.log(`📋 Found ${buttons.length} button rows in message`);
+
+            let buttonClicked = false;
+
+            // Find and click the button matching the format
+            for (let row of buttons) {
+                for (let button of row.buttons) {
+                    const buttonText = button.text || '';
+                    console.log(`🔍 Checking button: "${buttonText}"`);
+
+                    // Check if button text matches the format (e.g., "1080p", "720p")
+                    if (buttonText.includes(format)) {
+                        console.log(`✅ Found matching button: "${buttonText}"`);
+
+                        // Click the button
+                        await lastFormatMessage.click({ data: button.data });
+                        console.log(`🖱️ Clicked button for ${format}`);
+                        buttonClicked = true;
+                        break;
+                    }
+                }
+                if (buttonClicked) break;
+            }
+
+            if (!buttonClicked) {
+                console.warn(`⚠️ Could not find button for format: ${format}`);
+                console.log('Available buttons:', buttons.map(row =>
+                    row.buttons.map(b => b.text).join(', ')
+                ).join(' | '));
+
+                // Fallback: send text message
+                console.log('📤 Falling back to text message');
+                await client.sendMessage(bot, { message: format });
+            }
+        } catch (clickError) {
+            console.error('❌ Error clicking button:', clickError);
+            console.log('📤 Falling back to text message');
+            // Fallback to text message if button click fails
+            await client.sendMessage(bot, { message: format });
+        }
 
         // Return immediately - client will poll for progress
         res.json({
