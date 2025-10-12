@@ -119,8 +119,11 @@ async function initTelegram() {
         console.log('Session String:', client.session.save());
         isConnected = true;
 
-        // Listen for incoming messages with proper event handler
+        // Listen for ALL incoming messages (not just specific chat)
+        // This catches messages from channels, groups, and direct chats
         client.addEventHandler(handleIncomingMessage, new NewMessage({}));
+
+        console.log('🎧 Listening to ALL incoming messages from ALL chats');
 
         // Keep connection alive with ping
         startKeepAlive();
@@ -176,9 +179,15 @@ async function handleIncomingMessage(event) {
         if (!message) return;
 
         // LOG ALL MESSAGES FOR DEBUGGING
+        const chatIdStr = message.chatId ? message.chatId.toString() : 'unknown';
+        const isChannel = message.isChannel;
+        const isGroup = message.isGroup;
+        const chatType = isChannel ? 'CHANNEL' : isGroup ? 'GROUP' : 'DIRECT';
+
         console.log('📬 RAW MESSAGE RECEIVED:', {
             id: message.id,
-            chatId: message.chatId,
+            chatId: chatIdStr,
+            chatType: chatType,
             hasMedia: !!message.media,
             mediaType: message.media?.className || 'none',
             hasText: !!message.text,
@@ -366,14 +375,16 @@ async function handleIncomingMessage(event) {
         // (Bot might send from different context or chat)
         if (pendingDownloads.size > 0) {
             console.log('🔍 Pending downloads active, checking for video in ANY message...');
+            console.log('🔍 Message has media:', !!message.media, '| Type:', message.media?.className);
 
+            // Check for document/video
             if (message.media && message.media.document) {
                 const mimeType = message.media.document.mimeType || '';
                 console.log('📦 Document found with MIME:', mimeType);
 
                 if (mimeType.includes('video')) {
                     console.log('🎯 FOUND VIDEO while waiting for download!');
-                    console.log('📦 Video from sender:', senderUsername, '| Chat:', message.chatId);
+                    console.log('📦 Video from sender:', senderUsername, '| Chat:', chatIdStr, '| Type:', chatType);
 
                     const attributes = message.media.document.attributes || [];
                     const isVideo = attributes.some(attr =>
@@ -401,6 +412,7 @@ async function handleIncomingMessage(event) {
 
                         try {
                             // Download video
+                            console.log('⏬ Starting video download...');
                             await fastDownloadMedia(client, message.media, filePath);
 
                             // Store the download info
@@ -413,6 +425,7 @@ async function handleIncomingMessage(event) {
 
                             // Resolve first pending download
                             for (let [key, resolve] of pendingDownloads.entries()) {
+                                console.log(`✅ Resolving pending download: ${key}`);
                                 resolve(downloadInfo);
                                 pendingDownloads.delete(key);
 
@@ -429,6 +442,18 @@ async function handleIncomingMessage(event) {
                             }
                         } catch (downloadError) {
                             console.error('❌ Download failed:', downloadError);
+
+                            // Mark as failed
+                            for (let [key, resolve] of pendingDownloads.entries()) {
+                                if (downloadProgress.has(key)) {
+                                    downloadProgress.get(key).complete = true;
+                                    downloadProgress.get(key).success = false;
+                                    downloadProgress.get(key).error = 'Video download failed: ' + downloadError.message;
+                                }
+                                resolve(null);
+                                pendingDownloads.delete(key);
+                                break;
+                            }
                         }
                     }
                 }
