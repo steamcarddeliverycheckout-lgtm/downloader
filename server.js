@@ -34,10 +34,13 @@ async function initTelegram() {
 
         client = new TelegramClient(stringSession, apiId, apiHash, {
             connectionRetries: 10,
-            retryDelay: 2000,
+            retryDelay: 1000,
             autoReconnect: true,
             useWSS: false,
             timeout: 30000,
+            downloadRetries: 5,
+            requestRetries: 3,
+            floodSleepThreshold: 60,
         });
 
         // Handle connection errors
@@ -134,9 +137,6 @@ async function handleIncomingMessage(event) {
                 if (isVideo) {
                     console.log('📹 Video received from bot!');
 
-                    // Download the video
-                    const buffer = await client.downloadMedia(message.media, {});
-
                     // Save video temporarily
                     const fileName = `video_${Date.now()}.mp4`;
                     const filePath = path.join(__dirname, 'public', 'downloads', fileName);
@@ -146,20 +146,64 @@ async function handleIncomingMessage(event) {
                         fs.mkdirSync(path.join(__dirname, 'public', 'downloads'), { recursive: true });
                     }
 
-                    fs.writeFileSync(filePath, buffer);
+                    try {
+                        // Use streaming download with writeStream for better performance
+                        const writeStream = fs.createWriteStream(filePath);
+                        const fileSize = message.media.document.size;
+                        let downloadedSize = 0;
+                        const startTime = Date.now();
 
-                    // Store the download info
-                    const downloadInfo = {
-                        fileName: fileName,
-                        url: `/downloads/${fileName}`,
-                        timestamp: Date.now()
-                    };
+                        console.log(`📦 Starting streaming download (${(fileSize / 1024 / 1024).toFixed(2)} MB)`);
 
-                    // Find pending request and resolve it
-                    for (let [key, resolve] of pendingDownloads.entries()) {
-                        resolve(downloadInfo);
-                        pendingDownloads.delete(key);
-                        break;
+                        // Download with progress callback - streams chunks directly
+                        // Using larger chunk size and multiple workers for faster downloads
+                        await client.downloadMedia(message.media, {
+                            outputFile: writeStream,
+                            workers: 3,
+                            progressCallback: (downloaded, total) => {
+                                downloadedSize = downloaded;
+                                const progress = ((downloaded / total) * 100).toFixed(1);
+                                const speed = (downloaded / 1024 / 1024) / ((Date.now() - startTime) / 1000);
+                                console.log(`⏬ Progress: ${progress}% (${speed.toFixed(2)} MB/s)`);
+                            }
+                        });
+
+                        // Wait for write stream to finish
+                        await new Promise((resolve, reject) => {
+                            writeStream.on('finish', resolve);
+                            writeStream.on('error', reject);
+                        });
+
+                        const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
+                        console.log(`✅ Download completed in ${totalTime}s`);
+
+                        // Store the download info
+                        const downloadInfo = {
+                            fileName: fileName,
+                            url: `/downloads/${fileName}`,
+                            timestamp: Date.now()
+                        };
+
+                        // Find pending request and resolve it
+                        for (let [key, resolve] of pendingDownloads.entries()) {
+                            resolve(downloadInfo);
+                            pendingDownloads.delete(key);
+                            break;
+                        }
+                    } catch (downloadError) {
+                        console.error('❌ Error during download:', downloadError);
+
+                        // Clean up partial file if it exists
+                        if (fs.existsSync(filePath)) {
+                            fs.unlinkSync(filePath);
+                            console.log('🗑️ Cleaned up partial download');
+                        }
+
+                        // Reject all pending requests
+                        for (let [key, resolve] of pendingDownloads.entries()) {
+                            resolve(null);
+                            pendingDownloads.delete(key);
+                        }
                     }
                 }
             }
@@ -207,13 +251,13 @@ app.post('/api/download', async (req, res) => {
             const requestId = Date.now();
             pendingDownloads.set(requestId, resolve);
 
-            // Timeout after 90 seconds
+            // Timeout after 60 seconds (reduced from 90s for faster feedback)
             setTimeout(() => {
                 if (pendingDownloads.has(requestId)) {
                     pendingDownloads.delete(requestId);
                     resolve(null);
                 }
-            }, 90000);
+            }, 60000);
         });
 
         const result = await downloadPromise;
