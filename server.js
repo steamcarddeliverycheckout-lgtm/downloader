@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const { TelegramClient } = require('telegram');
 const { StringSession } = require('telegram/sessions');
-const { NewMessage } = require('telegram/events');
+const { NewMessage, EditedMessage } = require('telegram/events');
 const input = require('input');
 const path = require('path');
 const fs = require('fs');
@@ -122,7 +122,10 @@ async function initTelegram() {
         // This catches messages from channels, groups, and direct chats
         client.addEventHandler(handleIncomingMessage, new NewMessage({}));
 
-        console.log('🎧 Listening to ALL incoming messages from ALL chats');
+        // ALSO listen for EDITED messages (bot edits progress message to video)
+        client.addEventHandler(handleIncomingMessage, new EditedMessage({}));
+
+        console.log('🎧 Listening to ALL new AND edited messages from ALL chats');
 
         // Keep connection alive with ping
         startKeepAlive();
@@ -188,6 +191,7 @@ async function handleIncomingMessage(event) {
         }
 
         console.log('✅ Message from @Ebenozdownbot:', {
+            isEdited: !!event.isEdited || !!message.edit_date,
             hasMedia: !!message.media,
             mediaType: message.media?.className || 'none',
             hasText: !!message.text,
