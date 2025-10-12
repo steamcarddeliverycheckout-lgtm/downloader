@@ -181,13 +181,26 @@ async function handleIncomingMessage(event) {
             // Check if it's a text message with format information
             if (message.text) {
                 const text = message.text;
+                console.log('📨 Received text message from bot:', text.substring(0, 200) + '...');
 
                 // Check if it's YouTube format list
-                if (text.includes('📹') && (text.includes('1080p') || text.includes('720p') || text.includes('480p'))) {
-                    console.log('📋 YouTube formats received from bot!');
+                // Bot can send formats in different ways, so check for multiple indicators
+                const isFormatList = (
+                    (text.includes('📹') || text.includes('Download formats') || text.includes('format')) &&
+                    (text.includes('1080p') || text.includes('720p') || text.includes('480p') || text.includes('MP3'))
+                );
+
+                if (isFormatList) {
+                    console.log('📋 YouTube formats detected in message!');
 
                     // Parse formats from message
                     const formats = parseYouTubeFormats(text);
+
+                    if (formats.length > 0) {
+                        console.log(`✅ Successfully parsed ${formats.length} formats:`, formats.map(f => f.quality).join(', '));
+                    } else {
+                        console.warn('⚠️ No formats were parsed from the message. Message text:', text);
+                    }
 
                     // Store formats temporarily (associate with last request)
                     for (let [key, resolve] of pendingDownloads.entries()) {
@@ -297,15 +310,15 @@ async function handleIncomingMessage(event) {
 function parseYouTubeFormats(text) {
     const formats = [];
 
-    // Common format patterns
+    // Common format patterns (updated to handle extra spaces before and after colon)
     const formatPatterns = [
-        { regex: /1080p:\s*(\d+MB)/i, quality: '1080p' },
-        { regex: /720p:\s*(\d+MB)/i, quality: '720p' },
-        { regex: /480p:\s*(\d+MB)/i, quality: '480p' },
-        { regex: /360p:\s*(\d+MB)/i, quality: '360p' },
-        { regex: /240p:\s*(\d+MB)/i, quality: '240p' },
-        { regex: /144p:\s*(\d+MB)/i, quality: '144p' },
-        { regex: /MP3:\s*(\d+MB)/i, quality: 'MP3' }
+        { regex: /1080p\s*:\s*(\d+MB)/i, quality: '1080p' },
+        { regex: /720p\s*:\s*(\d+MB)/i, quality: '720p' },
+        { regex: /480p\s*:\s*(\d+MB)/i, quality: '480p' },
+        { regex: /360p\s*:\s*(\d+MB)/i, quality: '360p' },
+        { regex: /240p\s*:\s*(\d+MB)/i, quality: '240p' },
+        { regex: /144p\s*:\s*(\d+MB)/i, quality: '144p' },
+        { regex: /MP3\s*:\s*(\d+MB)/i, quality: 'MP3' }
     ];
 
     formatPatterns.forEach(pattern => {
@@ -318,6 +331,7 @@ function parseYouTubeFormats(text) {
         }
     });
 
+    console.log(`📋 Parsed ${formats.length} formats from bot message`);
     return formats;
 }
 
