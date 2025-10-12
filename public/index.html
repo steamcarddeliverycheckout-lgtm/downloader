@@ -469,7 +469,8 @@
                         const downloadLink = document.getElementById('downloadLink');
 
                         videoPlayer.src = data.videoUrl;
-                        downloadLink.href = data.videoUrl;
+                        // Add download parameter to force download
+                        downloadLink.href = data.videoUrl + '?download=true';
                         downloadLink.download = data.fileName;
 
                         hideLoading();
@@ -602,7 +603,8 @@
                                 const downloadLink = document.getElementById('downloadLink');
 
                                 videoPlayer.src = data.videoUrl;
-                                downloadLink.href = data.videoUrl;
+                                // Add download parameter to force download
+                                downloadLink.href = data.videoUrl + '?download=true';
                                 downloadLink.download = data.fileName;
 
                                 showResult();

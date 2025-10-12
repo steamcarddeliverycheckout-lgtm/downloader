@@ -14,7 +14,6 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.static('public'));
 
 // Telegram Configuration
 const apiId = parseInt(process.env.TELEGRAM_API_ID);
@@ -829,6 +828,69 @@ app.get('/api/youtube/progress/:id', (req, res) => {
         });
     }
 });
+
+// Download endpoint with proper headers
+app.get('/downloads/:filename', (req, res) => {
+    const filename = req.params.filename;
+    const filePath = path.join(__dirname, 'public', 'downloads', filename);
+
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: 'File not found' });
+    }
+
+    // Get file extension and set proper MIME type
+    const ext = path.extname(filename).toLowerCase();
+    let mimeType = 'video/mp4'; // default
+
+    if (ext === '.webm') {
+        mimeType = 'video/webm';
+    } else if (ext === '.mov') {
+        mimeType = 'video/quicktime';
+    } else if (ext === '.mp4') {
+        mimeType = 'video/mp4';
+    }
+
+    // Check if download is requested (vs just playing)
+    const forceDownload = req.query.download === 'true';
+
+    // Set headers
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Accept-Ranges', 'bytes');
+
+    if (forceDownload) {
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    } else {
+        res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+    }
+
+    // Get file size
+    const stat = fs.statSync(filePath);
+    res.setHeader('Content-Length', stat.size);
+
+    // Handle range requests for video seeking
+    const range = req.headers.range;
+    if (range) {
+        const parts = range.replace(/bytes=/, '').split('-');
+        const start = parseInt(parts[0], 10);
+        const end = parts[1] ? parseInt(parts[1], 10) : stat.size - 1;
+        const chunksize = (end - start) + 1;
+
+        res.status(206);
+        res.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`);
+        res.setHeader('Content-Length', chunksize);
+
+        const stream = fs.createReadStream(filePath, { start, end });
+        stream.pipe(res);
+    } else {
+        // Send entire file
+        const stream = fs.createReadStream(filePath);
+        stream.pipe(res);
+    }
+});
+
+// Serve static files (after custom routes so download route takes precedence)
+app.use(express.static('public'));
 
 // Start server
 app.listen(PORT, async () => {
