@@ -371,10 +371,14 @@ async function handleIncomingMessage(event) {
             }
         }
 
-        // FALLBACK: If we're waiting for a download and ANY video comes, accept it
-        // (Bot might send from different context or chat)
-        if (pendingDownloads.size > 0) {
-            console.log('🔍 Pending downloads active, checking for video in ANY message...');
+        // FALLBACK: Accept video if we have ANY active downloads (even after timeout)
+        // Check downloadProgress instead of pendingDownloads (more reliable)
+        const activeRequests = Array.from(downloadProgress.entries())
+            .filter(([id, progress]) => !progress.complete);
+
+        if (activeRequests.length > 0 || pendingDownloads.size > 0) {
+            console.log('🔍 Active requests found, checking for video...');
+            console.log('🔍 Pending:', pendingDownloads.size, '| Active progress:', activeRequests.length);
             console.log('🔍 Message has media:', !!message.media, '| Type:', message.media?.className);
 
             // Check for document/video
@@ -393,7 +397,7 @@ async function handleIncomingMessage(event) {
                     const isVideoMime = mimeType.includes('video');
 
                     if (isVideo || isVideoMime) {
-                        console.log('✅ ACCEPTING video from ANY source during download!');
+                        console.log('✅ ACCEPTING video!');
 
                         // Get proper file extension from mime type
                         let fileExt = '.mp4';
@@ -423,7 +427,10 @@ async function handleIncomingMessage(event) {
                                 timestamp: Date.now()
                             };
 
-                            // Resolve first pending download
+                            // Resolve pending downloads OR update active progress
+                            let resolved = false;
+
+                            // Try pending first
                             for (let [key, resolve] of pendingDownloads.entries()) {
                                 console.log(`✅ Resolving pending download: ${key}`);
                                 resolve(downloadInfo);
@@ -436,23 +443,42 @@ async function handleIncomingMessage(event) {
                                     downloadProgress.get(key).success = true;
                                     downloadProgress.get(key).videoUrl = downloadInfo.url;
                                     downloadProgress.get(key).fileName = downloadInfo.fileName;
-                                    console.log(`✅ Updated progress for request ${key}`);
                                 }
+                                resolved = true;
                                 break;
+                            }
+
+                            // If no pending, update first active progress (handles late videos)
+                            if (!resolved && activeRequests.length > 0) {
+                                const [requestId, progress] = activeRequests[0];
+                                console.log(`✅ Updating late video for request: ${requestId}`);
+                                progress.progress = 100;
+                                progress.complete = true;
+                                progress.success = true;
+                                progress.videoUrl = downloadInfo.url;
+                                progress.fileName = downloadInfo.fileName;
+                                console.log(`✅ Late video accepted and updated!`);
                             }
                         } catch (downloadError) {
                             console.error('❌ Download failed:', downloadError);
 
                             // Mark as failed
-                            for (let [key, resolve] of pendingDownloads.entries()) {
-                                if (downloadProgress.has(key)) {
-                                    downloadProgress.get(key).complete = true;
-                                    downloadProgress.get(key).success = false;
-                                    downloadProgress.get(key).error = 'Video download failed: ' + downloadError.message;
+                            if (pendingDownloads.size > 0) {
+                                for (let [key, resolve] of pendingDownloads.entries()) {
+                                    if (downloadProgress.has(key)) {
+                                        downloadProgress.get(key).complete = true;
+                                        downloadProgress.get(key).success = false;
+                                        downloadProgress.get(key).error = 'Video download failed: ' + downloadError.message;
+                                    }
+                                    resolve(null);
+                                    pendingDownloads.delete(key);
+                                    break;
                                 }
-                                resolve(null);
-                                pendingDownloads.delete(key);
-                                break;
+                            } else if (activeRequests.length > 0) {
+                                const [requestId, progress] = activeRequests[0];
+                                progress.complete = true;
+                                progress.success = false;
+                                progress.error = 'Video download failed: ' + downloadError.message;
                             }
                         }
                     }
