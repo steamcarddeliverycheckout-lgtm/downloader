@@ -363,16 +363,17 @@ async function handleIncomingMessage(event) {
         }
 
         // FALLBACK: If we're waiting for a download and ANY video comes, accept it
-        // (Bot might send from different context)
-        if (!sender || sender.username !== botUsername.replace('@', '')) {
-            console.log('⚠️ Message NOT from target bot, but checking if video...');
+        // (Bot might send from different context or chat)
+        if (pendingDownloads.size > 0) {
+            console.log('🔍 Pending downloads active, checking for video in ANY message...');
 
-            // Only accept if we have pending downloads
-            if (pendingDownloads.size > 0 && message.media && message.media.document) {
+            if (message.media && message.media.document) {
                 const mimeType = message.media.document.mimeType || '';
+                console.log('📦 Document found with MIME:', mimeType);
+
                 if (mimeType.includes('video')) {
-                    console.log('🎯 FALLBACK: Found video from different sender while waiting for download!');
-                    console.log('📦 Accepting video from:', senderUsername);
+                    console.log('🎯 FOUND VIDEO while waiting for download!');
+                    console.log('📦 Video from sender:', senderUsername, '| Chat:', message.chatId);
 
                     const attributes = message.media.document.attributes || [];
                     const isVideo = attributes.some(attr =>
@@ -381,7 +382,7 @@ async function handleIncomingMessage(event) {
                     const isVideoMime = mimeType.includes('video');
 
                     if (isVideo || isVideoMime) {
-                        console.log('✅ FALLBACK: Processing video...');
+                        console.log('✅ ACCEPTING video from ANY source during download!');
 
                         // Get proper file extension from mime type
                         let fileExt = '.mp4';
@@ -422,12 +423,12 @@ async function handleIncomingMessage(event) {
                                     downloadProgress.get(key).success = true;
                                     downloadProgress.get(key).videoUrl = downloadInfo.url;
                                     downloadProgress.get(key).fileName = downloadInfo.fileName;
-                                    console.log(`✅ FALLBACK: Updated progress for request ${key}`);
+                                    console.log(`✅ Updated progress for request ${key}`);
                                 }
                                 break;
                             }
                         } catch (downloadError) {
-                            console.error('❌ FALLBACK: Download failed:', downloadError);
+                            console.error('❌ Download failed:', downloadError);
                         }
                     }
                 }
