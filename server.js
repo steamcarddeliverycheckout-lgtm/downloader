@@ -255,8 +255,16 @@ async function handleIncomingMessage(event) {
 
         const mimeType = message.media.document.mimeType || '';
         const attributes = message.media.document.attributes || [];
-        const isVideo = attributes.some(attr => attr.className === 'DocumentAttributeVideo') ||
-                        mimeType.includes('video');
+
+        // Determine if the document is likely a video
+        const hasVideoAttribute = attributes.some(attr => attr.className === 'DocumentAttributeVideo');
+        const filenameAttr = attributes.find(attr => attr.className === 'DocumentAttributeFilename');
+        const fileNameFromAttr = filenameAttr && filenameAttr.fileName ? filenameAttr.fileName : '';
+        const fileExtFromAttr = fileNameFromAttr ? path.extname(fileNameFromAttr).toLowerCase() : '';
+        const allowedVideoExts = new Set(['.mp4', '.webm', '.mov', '.mkv']);
+        const isMimeVideo = (mimeType || '').toLowerCase().includes('video');
+        const isFileNameVideo = allowedVideoExts.has(fileExtFromAttr);
+        const isVideo = hasVideoAttribute || isMimeVideo || isFileNameVideo;
 
         if (!isVideo) {
             return; // Not a video
@@ -266,9 +274,11 @@ async function handleIncomingMessage(event) {
         console.log('🎯 VIDEO FOUND from @Ebenozdownbot! Starting download...');
         console.log(`📦 Size: ${(message.media.document.size / 1024 / 1024).toFixed(2)} MB`);
 
-        // Get file extension
+        // Get file extension (prefer from filename attribute)
         let fileExt = '.mp4';
-        if (mimeType.includes('video/webm')) fileExt = '.webm';
+        if (fileExtFromAttr && allowedVideoExts.has(fileExtFromAttr)) {
+            fileExt = fileExtFromAttr;
+        } else if (mimeType.includes('video/webm')) fileExt = '.webm';
         else if (mimeType.includes('video/mp4')) fileExt = '.mp4';
         else if (mimeType.includes('video/quicktime')) fileExt = '.mov';
 
@@ -343,26 +353,29 @@ async function handleIncomingMessage(event) {
 function parseYouTubeFormats(text) {
     const formats = [];
 
-    // Common format patterns (updated to handle extra spaces before and after colon)
-    const formatPatterns = [
-        { regex: /1080p\s*:\s*(\d+MB)/i, quality: '1080p' },
-        { regex: /720p\s*:\s*(\d+MB)/i, quality: '720p' },
-        { regex: /480p\s*:\s*(\d+MB)/i, quality: '480p' },
-        { regex: /360p\s*:\s*(\d+MB)/i, quality: '360p' },
-        { regex: /240p\s*:\s*(\d+MB)/i, quality: '240p' },
-        { regex: /144p\s*:\s*(\d+MB)/i, quality: '144p' },
-        { regex: /MP3\s*:\s*(\d+MB)/i, quality: 'MP3' }
-    ];
+    // Robust multi-match regex: finds quality and size with or without colon, allows spaces in size
+    // Examples matched: "144p : 1MB", "🎬 144p 💾 1 MB", "MP3 - 2MB"
+    const qualityRegex = /(1080p|720p|480p|360p|240p|144p|MP3)/gi;
+    const sizeAfterRegex = new RegExp(
+        /(1080p|720p|480p|360p|240p|144p|MP3)[^\n\r]*?(?:\:)?[^\d]*(\d+)\s*(KB|MB|GB)/gi
+    );
 
-    formatPatterns.forEach(pattern => {
-        const match = text.match(pattern.regex);
-        if (match) {
-            formats.push({
-                quality: pattern.quality,
-                size: match[1]
-            });
+    // Prefer the combined regex to extract all entries in one pass
+    const matches = Array.from(text.matchAll(sizeAfterRegex));
+    if (matches.length > 0) {
+        for (const m of matches) {
+            const quality = m[1].toUpperCase();
+            const sizeNum = m[2];
+            const unit = m[3].toUpperCase();
+            formats.push({ quality, size: `${sizeNum}${unit}` });
         }
-    });
+    } else {
+        // Fallback: if sizes not found, at least list available qualities without sizes
+        const quals = Array.from(new Set((text.match(qualityRegex) || []).map(q => q.toUpperCase())));
+        for (const q of quals) {
+            formats.push({ quality: q, size: '?' });
+        }
+    }
 
     console.log(`📋 Parsed ${formats.length} formats from bot message`);
     return formats;
@@ -570,41 +583,61 @@ app.post('/api/youtube/download', async (req, res) => {
             let buttonClicked = false;
 
             // Find and click the button matching the format
-            for (let row of buttons) {
-                for (let button of row.buttons) {
+            let rowIndex = 0;
+            let colIndex = 0;
+            let selectedButtonText = '';
+            for (let i = 0; i < buttons.length && !buttonClicked; i++) {
+                const row = buttons[i];
+                for (let j = 0; j < row.buttons.length && !buttonClicked; j++) {
+                    const button = row.buttons[j];
                     const buttonText = button.text || '';
                     console.log(`🔍 Checking button: "${buttonText}"`);
-
-                    // Check if button text matches the format (e.g., "1080p", "720p")
                     if (buttonText.includes(format)) {
                         console.log(`✅ Found matching button: "${buttonText}"`);
+                        rowIndex = i;
+                        colIndex = j;
+                        selectedButtonText = buttonText;
+                        // Try clicking by position first
+                        try {
+                            await lastFormatMessage.click({ i: rowIndex, j: colIndex });
+                            console.log(`🖱️ Clicked button (by index) for ${format}`);
+                            buttonClicked = true;
+                        } catch (e1) {
+                            // Try clicking by data payload
+                            try {
+                                await lastFormatMessage.click({ data: button.data });
+                                console.log(`🖱️ Clicked button (by data) for ${format}`);
+                                buttonClicked = true;
+                            } catch (e2) {
+                                // Try clicking by text
+                                try {
+                                    await lastFormatMessage.click({ text: buttonText });
+                                    console.log(`🖱️ Clicked button (by text) for ${format}`);
+                                    buttonClicked = true;
+                                } catch (e3) {
+                                    // Will fallback below
+                                }
+                            }
+                        }
 
-                        // Click the button
-                        await lastFormatMessage.click({ data: button.data });
-                        console.log(`🖱️ Clicked button for ${format}`);
-                        buttonClicked = true;
-
-                        // Update progress status
-                        if (downloadProgress.has(requestId)) {
+                        if (buttonClicked && downloadProgress.has(requestId)) {
                             downloadProgress.get(requestId).progress = 10;
                             downloadProgress.get(requestId).status = `Processing ${format} video...`;
                         }
-
-                        break;
                     }
                 }
-                if (buttonClicked) break;
             }
 
             if (!buttonClicked) {
-                console.warn(`⚠️ Could not find button for format: ${format}`);
+                console.warn(`⚠️ Could not find/click button for format: ${format}`);
                 console.log('Available buttons:', buttons.map(row =>
                     row.buttons.map(b => b.text).join(', ')
                 ).join(' | '));
 
-                // Fallback: send text message
-                console.log('📤 Falling back to text message');
-                await client.sendMessage(bot, { message: format });
+                // Fallback: send the exact button text if we matched one; else send the format label
+                const fallbackText = selectedButtonText || format;
+                console.log('📤 Falling back to text message:', fallbackText);
+                await client.sendMessage(bot, { message: fallbackText });
             }
         } catch (clickError) {
             console.error('❌ Error clicking button:', clickError);
