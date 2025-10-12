@@ -454,6 +454,8 @@
                     }
                 } else {
                     // Non-YouTube URL (Instagram, TikTok, etc.)
+                    console.log('📱 Non-YouTube URL detected, sending to /api/download');
+
                     const response = await fetch('/api/download', {
                         method: 'POST',
                         headers: {
@@ -463,6 +465,7 @@
                     });
 
                     const data = await response.json();
+                    console.log('📦 Response from /api/download:', data);
 
                     if (data.success) {
                         // Show media (video or audio)
@@ -474,6 +477,7 @@
                 }
             } catch (error) {
                 hideLoading();
+                console.error('❌ Download error:', error);
                 showError(error.message || 'An error occurred. Please try again.');
             } finally {
                 document.getElementById('downloadBtn').disabled = false;
@@ -578,9 +582,17 @@
 
                 try {
                     const response = await fetch(`/api/youtube/progress/${requestId}`);
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
                     const data = await response.json();
 
                     console.log(`Poll ${pollCount}: Progress ${data.progress}%, Status: ${data.status}`);
+
+                    // Reset error count on successful poll
+                    window.pollErrorCount = 0;
 
                     if (data.progress !== undefined) {
                         updateProgress(data.progress, data.status);
@@ -592,6 +604,11 @@
 
                             if (data.success && data.videoUrl) {
                                 // Show media (video or audio)
+                                console.log('📦 Final data:', {
+                                    videoUrl: data.videoUrl,
+                                    fileName: data.fileName,
+                                    mediaType: data.mediaType
+                                });
                                 showMedia(data.videoUrl, data.fileName, data.mediaType);
                             } else {
                                 showError(data.error || 'Download failed');
@@ -607,9 +624,17 @@
                     }
                 } catch (error) {
                     console.error('Polling error:', error);
-                    clearInterval(interval);
-                    hideProgress();
-                    showError('Failed to get progress');
+
+                    // Don't stop polling on single error, but count them
+                    if (!window.pollErrorCount) window.pollErrorCount = 0;
+                    window.pollErrorCount++;
+
+                    // Only stop if we get 5 consecutive errors
+                    if (window.pollErrorCount >= 5) {
+                        clearInterval(interval);
+                        hideProgress();
+                        showError('Connection lost. Please try again.');
+                    }
                 }
             }, 1000); // Poll every second
         }
@@ -626,17 +651,37 @@
 
         // UI Helper Functions
         function showMedia(url, fileName, mediaType) {
+            console.log('🎬 showMedia called with:', { url, fileName, mediaType });
+
             const videoPlayer = document.getElementById('videoPlayer');
             const audioPlayer = document.getElementById('audioPlayer');
             const downloadLink = document.getElementById('downloadLink');
             const resultTitle = document.getElementById('resultTitle');
 
-            // Determine if it's audio or video
-            const isAudio = mediaType === 'audio' || fileName.match(/\.(mp3|ogg|wav|m4a|aac)$/i);
-
             // Hide both players first
             videoPlayer.style.display = 'none';
             audioPlayer.style.display = 'none';
+
+            // Determine if it's audio or video with multiple fallback checks
+            let isAudio = false;
+
+            // Primary check: mediaType parameter from backend
+            if (mediaType) {
+                isAudio = mediaType.toLowerCase() === 'audio';
+                console.log('✅ Media type from backend:', mediaType, '→ isAudio:', isAudio);
+            }
+            // Fallback 1: Check filename extension
+            else if (fileName) {
+                const audioExtensions = /\.(mp3|ogg|wav|m4a|aac|flac|opus)$/i;
+                isAudio = audioExtensions.test(fileName);
+                console.log('⚠️ No mediaType, using filename detection:', fileName, '→ isAudio:', isAudio);
+            }
+            // Fallback 2: Try to detect from URL
+            else if (url) {
+                const audioExtensions = /\.(mp3|ogg|wav|m4a|aac|flac|opus)(\?|$)/i;
+                isAudio = audioExtensions.test(url);
+                console.log('⚠️ No mediaType or fileName, using URL detection:', url, '→ isAudio:', isAudio);
+            }
 
             if (isAudio) {
                 // Show audio player
@@ -644,17 +689,31 @@
                 audioPlayer.style.display = 'block';
                 resultTitle.textContent = '✅ Your Audio is Ready!';
                 downloadLink.textContent = '📥 Download Audio';
+                console.log('🎵 Showing audio player');
+
+                // Error handling for audio player
+                audioPlayer.onerror = function(e) {
+                    console.error('❌ Audio player error:', e);
+                    showError('Failed to load audio. Please try downloading instead.');
+                };
             } else {
-                // Show video player
+                // Show video player (default)
                 videoPlayer.src = url;
                 videoPlayer.style.display = 'block';
                 resultTitle.textContent = '✅ Your Video is Ready!';
                 downloadLink.textContent = '📥 Download Video';
+                console.log('🎬 Showing video player');
+
+                // Error handling for video player
+                videoPlayer.onerror = function(e) {
+                    console.error('❌ Video player error:', e);
+                    showError('Failed to load video. Please try downloading instead.');
+                };
             }
 
             // Add download parameter to force download
             downloadLink.href = url + '?download=true';
-            downloadLink.download = fileName;
+            downloadLink.download = fileName || 'media';
 
             showResult();
         }

@@ -306,6 +306,13 @@ async function handleIncomingMessage(event) {
         const mimeType = message.media.document.mimeType || '';
         const attributes = message.media.document.attributes || [];
 
+        // Detailed logging for debugging
+        console.log('📦 Media details:', {
+            mimeType: mimeType,
+            size: (message.media.document.size / 1024 / 1024).toFixed(2) + ' MB',
+            attributes: attributes.map(attr => attr.className).join(', ')
+        });
+
         // Check for VIDEO
         const isVideo = attributes.some(attr => attr.className === 'DocumentAttributeVideo') ||
                         mimeType.includes('video');
@@ -319,7 +326,32 @@ async function handleIncomingMessage(event) {
                         mimeType.includes('wav') ||
                         mimeType.includes('m4a');
 
+        console.log('🎯 Media type detection:', {
+            isVideo: isVideo,
+            isAudio: isAudio,
+            finalType: isVideo ? 'VIDEO' : (isAudio ? 'AUDIO' : 'UNKNOWN')
+        });
+
+        // Handle edge case: if neither video nor audio detected, try to infer from MIME type
         if (!isVideo && !isAudio) {
+            console.warn('⚠️ Unknown media type, attempting to infer from MIME type:', mimeType);
+
+            // Check if MIME type suggests it's a media file
+            if (mimeType.includes('video') || mimeType.includes('mp4') || mimeType.includes('webm')) {
+                console.log('✅ Inferring as VIDEO based on MIME type');
+                isVideo = true;
+            } else if (mimeType.includes('audio') || mimeType.includes('mpeg')) {
+                console.log('✅ Inferring as AUDIO based on MIME type');
+                isAudio = true;
+            } else {
+                console.error('❌ Cannot determine media type, ignoring message');
+                return; // Not a video or audio
+            }
+        }
+
+        // If still can't determine, ignore
+        if (!isVideo && !isAudio) {
+            console.error('❌ Media type detection failed completely');
             return; // Not a video or audio
         }
 
@@ -337,6 +369,8 @@ async function handleIncomingMessage(event) {
             if (mimeType.includes('video/webm')) fileExt = '.webm';
             else if (mimeType.includes('video/mp4')) fileExt = '.mp4';
             else if (mimeType.includes('video/quicktime')) fileExt = '.mov';
+            else if (mimeType.includes('video/x-matroska')) fileExt = '.mkv';
+            else fileExt = '.mp4'; // Default to mp4 for unknown video types
         } else if (isAudio) {
             filePrefix = 'audio';
             if (mimeType.includes('audio/mpeg') || mimeType.includes('mp3')) fileExt = '.mp3';
@@ -344,10 +378,20 @@ async function handleIncomingMessage(event) {
             else if (mimeType.includes('audio/wav')) fileExt = '.wav';
             else if (mimeType.includes('audio/m4a') || mimeType.includes('audio/mp4')) fileExt = '.m4a';
             else if (mimeType.includes('audio/aac')) fileExt = '.aac';
+            else if (mimeType.includes('audio/flac')) fileExt = '.flac';
+            else if (mimeType.includes('audio/opus')) fileExt = '.opus';
+            else fileExt = '.mp3'; // Default to mp3 for unknown audio types
         }
 
         const fileName = `${filePrefix}_${Date.now()}${fileExt}`;
         const filePath = path.join(__dirname, 'public', 'downloads', fileName);
+
+        console.log('💾 File details:', {
+            fileName: fileName,
+            extension: fileExt,
+            type: filePrefix,
+            path: filePath
+        });
 
         // Create downloads directory
         const downloadsDir = path.join(__dirname, 'public', 'downloads');
@@ -368,6 +412,7 @@ async function handleIncomingMessage(event) {
             };
 
             console.log(`✅ ${mediaType} downloaded successfully!`);
+            console.log('📤 Sending to frontend:', downloadInfo);
 
             // Resolve ALL pending requests
             for (let [key, resolve] of pendingDownloads.entries()) {
@@ -383,6 +428,7 @@ async function handleIncomingMessage(event) {
                     value.success = true;
                     value.videoUrl = downloadInfo.url;
                     value.fileName = downloadInfo.fileName;
+                    value.mediaType = downloadInfo.mediaType; // Add media type
                 }
             }
 
@@ -496,7 +542,8 @@ app.post('/api/download', async (req, res) => {
             res.json({
                 success: true,
                 videoUrl: result.url,
-                fileName: result.fileName
+                fileName: result.fileName,
+                mediaType: result.mediaType || 'video' // Include media type for frontend
             });
         } else {
             res.status(408).json({ error: 'Download timeout or no video received from bot' });
@@ -775,6 +822,8 @@ app.get('/downloads/:filename', (req, res) => {
         mimeType = 'video/quicktime';
     } else if (ext === '.mp4') {
         mimeType = 'video/mp4';
+    } else if (ext === '.mkv') {
+        mimeType = 'video/x-matroska';
     }
     // Audio MIME types
     else if (ext === '.mp3') {
@@ -787,6 +836,10 @@ app.get('/downloads/:filename', (req, res) => {
         mimeType = 'audio/mp4';
     } else if (ext === '.aac') {
         mimeType = 'audio/aac';
+    } else if (ext === '.flac') {
+        mimeType = 'audio/flac';
+    } else if (ext === '.opus') {
+        mimeType = 'audio/opus';
     }
 
     // Check if download is requested (vs just playing)
