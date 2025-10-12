@@ -270,16 +270,28 @@ async function handleIncomingMessage(event) {
                         for (let [key, resolve] of pendingDownloads.entries()) {
                             resolve(downloadInfo);
                             pendingDownloads.delete(key);
+
+                            // Update progress for this specific request
+                            if (downloadProgress.has(key)) {
+                                downloadProgress.get(key).progress = 100;
+                                downloadProgress.get(key).complete = true;
+                                downloadProgress.get(key).success = true;
+                                downloadProgress.get(key).videoUrl = downloadInfo.url;
+                                downloadProgress.get(key).fileName = downloadInfo.fileName;
+                                console.log(`✅ Updated progress for request ${key}`);
+                            }
                             break;
                         }
 
-                        // Mark all progress as complete
+                        // Clean up any remaining progress entries (shouldn't happen)
                         for (let [key, value] of downloadProgress.entries()) {
-                            value.progress = 100;
-                            value.complete = true;
-                            value.success = true;
-                            value.videoUrl = downloadInfo.url;
-                            value.fileName = downloadInfo.fileName;
+                            if (!value.complete) {
+                                value.progress = 100;
+                                value.complete = true;
+                                value.success = true;
+                                value.videoUrl = downloadInfo.url;
+                                value.fileName = downloadInfo.fileName;
+                            }
                         }
                     } catch (downloadError) {
                         console.error('❌ Error during download:', downloadError);
@@ -519,10 +531,11 @@ app.post('/api/youtube/download', async (req, res) => {
         // Create progress tracking
         const requestId = Date.now();
         downloadProgress.set(requestId, {
-            progress: 0,
-            status: 'Starting download...',
+            progress: 5,
+            status: 'Requesting video from bot...',
             complete: false,
-            success: false
+            success: false,
+            startTime: Date.now()
         });
 
         // Check if we have the format message with buttons
@@ -554,6 +567,13 @@ app.post('/api/youtube/download', async (req, res) => {
                         await lastFormatMessage.click({ data: button.data });
                         console.log(`🖱️ Clicked button for ${format}`);
                         buttonClicked = true;
+
+                        // Update progress status
+                        if (downloadProgress.has(requestId)) {
+                            downloadProgress.get(requestId).progress = 10;
+                            downloadProgress.get(requestId).status = `Processing ${format} video...`;
+                        }
+
                         break;
                     }
                 }

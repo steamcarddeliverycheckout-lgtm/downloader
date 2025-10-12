@@ -556,9 +556,16 @@
                     throw new Error('Download failed');
                 }
 
-                // Start polling for progress
-                const requestId = Date.now();
-                pollDownloadProgress(requestId);
+                // Get requestId from backend response
+                const data = await response.json();
+                console.log('Download started, requestId:', data.requestId);
+
+                if (data.success && data.requestId) {
+                    // Start polling for progress using backend's requestId
+                    pollDownloadProgress(data.requestId);
+                } else {
+                    throw new Error('Failed to start download');
+                }
 
             } catch (error) {
                 hideProgress();
@@ -568,19 +575,28 @@
 
         // Poll download progress
         async function pollDownloadProgress(requestId) {
+            console.log('Starting progress polling for requestId:', requestId);
+            let pollCount = 0;
+            const maxPolls = 180; // 3 minutes max (180 seconds)
+
             const interval = setInterval(async () => {
+                pollCount++;
+
                 try {
                     const response = await fetch(`/api/youtube/progress/${requestId}`);
                     const data = await response.json();
+
+                    console.log(`Poll ${pollCount}: Progress ${data.progress}%, Status: ${data.status}`);
 
                     if (data.progress !== undefined) {
                         updateProgress(data.progress, data.status);
 
                         if (data.complete) {
                             clearInterval(interval);
+                            console.log('Download complete!', data);
                             hideProgress();
 
-                            if (data.success) {
+                            if (data.success && data.videoUrl) {
                                 // Show video result
                                 const videoPlayer = document.getElementById('videoPlayer');
                                 const downloadLink = document.getElementById('downloadLink');
@@ -595,7 +611,15 @@
                             }
                         }
                     }
+
+                    // Timeout after max polls
+                    if (pollCount >= maxPolls) {
+                        clearInterval(interval);
+                        hideProgress();
+                        showError('Download timeout. Please try again with a smaller file.');
+                    }
                 } catch (error) {
+                    console.error('Polling error:', error);
                     clearInterval(interval);
                     hideProgress();
                     showError('Failed to get progress');
