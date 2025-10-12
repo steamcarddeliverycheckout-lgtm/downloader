@@ -27,6 +27,110 @@ let pendingDownloads = new Map();
 let isConnected = false;
 let reconnectTimeout = null;
 
+// Custom fast download function with larger chunk size
+async function fastDownloadMedia(client, media, filePath, progressCallback) {
+    const { Api } = require('telegram');
+    const writeStream = fs.createWriteStream(filePath, { highWaterMark: 1024 * 1024 });
+
+    let offset = 0;
+    const chunkSize = 1024 * 1024; // 1MB chunks instead of default 128KB
+    const fileSize = media.document.size;
+    const startTime = Date.now();
+    let lastLogTime = startTime;
+
+    console.log(`📦 Fast download started (${(fileSize / 1024 / 1024).toFixed(2)} MB)`);
+
+    try {
+        // Get file location
+        const location = new Api.InputDocumentFileLocation({
+            id: media.document.id,
+            accessHash: media.document.accessHash,
+            fileReference: media.document.fileReference,
+            thumbSize: ''
+        });
+
+        // Download in parallel chunks
+        const workers = 8;
+        const chunksPerWorker = Math.ceil(fileSize / chunkSize / workers);
+        const downloadPromises = [];
+
+        for (let w = 0; w < workers; w++) {
+            const workerPromise = (async () => {
+                const chunks = [];
+                const startChunk = w * chunksPerWorker;
+                const endChunk = Math.min((w + 1) * chunksPerWorker, Math.ceil(fileSize / chunkSize));
+
+                for (let i = startChunk; i < endChunk; i++) {
+                    const offset = i * chunkSize;
+                    const limit = Math.min(chunkSize, fileSize - offset);
+
+                    try {
+                        const result = await client.invoke(
+                            new Api.upload.GetFile({
+                                location: location,
+                                offset: BigInt(offset),
+                                limit: limit,
+                                precise: true
+                            })
+                        );
+
+                        chunks.push({ index: i, data: result.bytes });
+
+                        // Progress callback
+                        const downloaded = (i + 1) * chunkSize;
+                        const now = Date.now();
+                        if (now - lastLogTime > 2000) {
+                            const progress = Math.min((downloaded / fileSize) * 100, 100).toFixed(1);
+                            const speed = (downloaded / 1024 / 1024) / ((now - startTime) / 1000);
+                            const eta = ((fileSize - downloaded) / (downloaded / ((now - startTime) / 1000))).toFixed(0);
+                            console.log(`⏬ ${progress}% | Speed: ${speed.toFixed(2)} MB/s | ETA: ${eta}s`);
+                            lastLogTime = now;
+                        }
+                    } catch (error) {
+                        console.error(`Worker ${w} chunk ${i} failed:`, error.message);
+                        throw error;
+                    }
+                }
+
+                return chunks;
+            })();
+
+            downloadPromises.push(workerPromise);
+        }
+
+        // Wait for all workers to complete
+        const allChunks = await Promise.all(downloadPromises);
+
+        // Flatten and sort chunks
+        const sortedChunks = allChunks.flat().sort((a, b) => a.index - b.index);
+
+        // Write to file in order
+        for (const chunk of sortedChunks) {
+            writeStream.write(chunk.data);
+        }
+
+        writeStream.end();
+
+        await new Promise((resolve, reject) => {
+            writeStream.on('finish', resolve);
+            writeStream.on('error', reject);
+        });
+
+        const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
+        const avgSpeed = (fileSize / 1024 / 1024 / totalTime).toFixed(2);
+        console.log(`✅ Fast download completed in ${totalTime}s (Avg: ${avgSpeed} MB/s)`);
+
+        return true;
+    } catch (error) {
+        console.error('Fast download failed:', error);
+        writeStream.destroy();
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+        throw error;
+    }
+}
+
 // Initialize Telegram Client with better error handling
 async function initTelegram() {
     try {
@@ -41,6 +145,9 @@ async function initTelegram() {
             downloadRetries: 5,
             requestRetries: 3,
             floodSleepThreshold: 60,
+            useIPv6: false,
+            dcId: undefined,  // Let client choose optimal DC
+            maxConcurrentDownloads: 8,  // Match worker count
         });
 
         // Handle connection errors
@@ -147,35 +254,8 @@ async function handleIncomingMessage(event) {
                     }
 
                     try {
-                        // Use streaming download with writeStream for better performance
-                        const writeStream = fs.createWriteStream(filePath);
-                        const fileSize = message.media.document.size;
-                        let downloadedSize = 0;
-                        const startTime = Date.now();
-
-                        console.log(`📦 Starting streaming download (${(fileSize / 1024 / 1024).toFixed(2)} MB)`);
-
-                        // Download with progress callback - streams chunks directly
-                        // Using larger chunk size and multiple workers for faster downloads
-                        await client.downloadMedia(message.media, {
-                            outputFile: writeStream,
-                            workers: 3,
-                            progressCallback: (downloaded, total) => {
-                                downloadedSize = downloaded;
-                                const progress = ((downloaded / total) * 100).toFixed(1);
-                                const speed = (downloaded / 1024 / 1024) / ((Date.now() - startTime) / 1000);
-                                console.log(`⏬ Progress: ${progress}% (${speed.toFixed(2)} MB/s)`);
-                            }
-                        });
-
-                        // Wait for write stream to finish
-                        await new Promise((resolve, reject) => {
-                            writeStream.on('finish', resolve);
-                            writeStream.on('error', reject);
-                        });
-
-                        const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
-                        console.log(`✅ Download completed in ${totalTime}s`);
+                        // Use custom fast download with 1MB chunks and parallel workers
+                        await fastDownloadMedia(client, message.media, filePath);
 
                         // Store the download info
                         const downloadInfo = {
