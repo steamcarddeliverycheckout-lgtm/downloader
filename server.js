@@ -299,6 +299,7 @@ async function handleIncomingMessage(event) {
         }
 
         // STEP 4: Check if this message contains a video or audio
+        // NOTE: Bot often sends thumbnails/images before the actual video, so we need to filter those out
         if (!message.media || !message.media.document) {
             return; // No media here
         }
@@ -312,6 +313,27 @@ async function handleIncomingMessage(event) {
             size: (message.media.document.size / 1024 / 1024).toFixed(2) + ' MB',
             attributes: attributes.map(attr => attr.className).join(', ')
         });
+
+        // FILTER OUT IMAGES/PHOTOS - Bot sends thumbnails before videos
+        if (mimeType.includes('image/')) {
+            console.log('🖼️ Ignoring image/thumbnail (waiting for actual video/audio)');
+            return;
+        }
+
+        // Filter out documents that are not media
+        const hasImageAttribute = attributes.some(attr =>
+            attr.className === 'DocumentAttributeImageSize'
+        );
+        const hasVideoOrAudioAttribute = attributes.some(attr =>
+            attr.className === 'DocumentAttributeVideo' ||
+            attr.className === 'DocumentAttributeAudio'
+        );
+
+        // If it has image attribute but no video/audio attribute, skip it
+        if (hasImageAttribute && !hasVideoOrAudioAttribute) {
+            console.log('🖼️ Ignoring image document (has DocumentAttributeImageSize only)');
+            return;
+        }
 
         // Check for VIDEO
         const isVideo = attributes.some(attr => attr.className === 'DocumentAttributeVideo') ||
@@ -345,6 +367,7 @@ async function handleIncomingMessage(event) {
                 isAudio = true;
             } else {
                 console.error('❌ Cannot determine media type, ignoring message');
+                console.log('💡 This might be a non-media document. Waiting for actual video/audio...');
                 return; // Not a video or audio
             }
         }
@@ -352,7 +375,16 @@ async function handleIncomingMessage(event) {
         // If still can't determine, ignore
         if (!isVideo && !isAudio) {
             console.error('❌ Media type detection failed completely');
+            console.log('💡 Skipping this message and waiting for actual media file...');
             return; // Not a video or audio
+        }
+
+        // FINAL VALIDATION: Check file size (should be reasonable for video/audio)
+        const fileSize = message.media.document.size;
+        if (fileSize < 10000) { // Less than 10KB - probably not a real video/audio
+            console.warn('⚠️ File too small for video/audio:', (fileSize / 1024).toFixed(2), 'KB');
+            console.log('💡 This is likely a thumbnail or metadata file. Waiting for actual media...');
+            return;
         }
 
         // STEP 5: WE HAVE MEDIA FROM @Ebenozdownbot - DOWNLOAD IT!
