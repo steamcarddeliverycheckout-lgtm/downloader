@@ -153,6 +153,16 @@
             margin-bottom: 15px;
         }
 
+        img.media-image {
+            width: 100%;
+            max-width: 100%;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            margin-bottom: 15px;
+            object-fit: contain;
+            max-height: 600px;
+        }
+
         .download-btn {
             background: #4CAF50;
             padding: 12px 25px;
@@ -325,13 +335,13 @@
 <body>
     <div class="container">
         <h1>📥 Social Media Downloader</h1>
-        <p class="subtitle">Paste your link below to download videos</p>
+        <p class="subtitle">Download videos, images, and audio from your favorite platforms</p>
 
         <div class="input-group">
             <input
                 type="text"
                 id="urlInput"
-                placeholder="Paste your link here (Instagram, TikTok, Twitter, etc.)"
+                placeholder="Paste your link here (Instagram, TikTok, Twitter, Pinterest, etc.)"
             >
             <button onclick="downloadVideo()" id="downloadBtn">Download</button>
         </div>
@@ -368,6 +378,7 @@
             <h3 id="resultTitle">✅ Your Media is Ready!</h3>
             <video id="videoPlayer" controls style="display:none;"></video>
             <audio id="audioPlayer" controls style="display:none;"></audio>
+            <img id="imageViewer" class="media-image" style="display:none;" alt="Downloaded image">
             <a href="#" id="downloadLink" class="download-btn" download>📥 Download</a>
         </div>
 
@@ -655,35 +666,37 @@
 
             const videoPlayer = document.getElementById('videoPlayer');
             const audioPlayer = document.getElementById('audioPlayer');
+            const imageViewer = document.getElementById('imageViewer');
             const downloadLink = document.getElementById('downloadLink');
             const resultTitle = document.getElementById('resultTitle');
 
-            // Hide both players first
+            // Hide all players first
             videoPlayer.style.display = 'none';
             audioPlayer.style.display = 'none';
+            imageViewer.style.display = 'none';
 
-            // Determine if it's audio or video with multiple fallback checks
-            let isAudio = false;
+            // Determine media type with multiple fallback checks
+            let mediaCategory = 'video'; // default
 
             // Primary check: mediaType parameter from backend
             if (mediaType) {
-                isAudio = mediaType.toLowerCase() === 'audio';
-                console.log('✅ Media type from backend:', mediaType, '→ isAudio:', isAudio);
+                mediaCategory = mediaType.toLowerCase();
+                console.log('✅ Media type from backend:', mediaType);
             }
-            // Fallback 1: Check filename extension
+            // Fallback: Check filename extension
             else if (fileName) {
                 const audioExtensions = /\.(mp3|ogg|wav|m4a|aac|flac|opus)$/i;
-                isAudio = audioExtensions.test(fileName);
-                console.log('⚠️ No mediaType, using filename detection:', fileName, '→ isAudio:', isAudio);
-            }
-            // Fallback 2: Try to detect from URL
-            else if (url) {
-                const audioExtensions = /\.(mp3|ogg|wav|m4a|aac|flac|opus)(\?|$)/i;
-                isAudio = audioExtensions.test(url);
-                console.log('⚠️ No mediaType or fileName, using URL detection:', url, '→ isAudio:', isAudio);
+                const imageExtensions = /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i;
+
+                if (audioExtensions.test(fileName)) {
+                    mediaCategory = 'audio';
+                } else if (imageExtensions.test(fileName)) {
+                    mediaCategory = 'image';
+                }
+                console.log('⚠️ No mediaType, using filename detection:', fileName, '→', mediaCategory);
             }
 
-            if (isAudio) {
+            if (mediaCategory === 'audio') {
                 // Show audio player
                 audioPlayer.src = url;
                 audioPlayer.style.display = 'block';
@@ -695,6 +708,19 @@
                 audioPlayer.onerror = function(e) {
                     console.error('❌ Audio player error:', e);
                     showError('Failed to load audio. Please try downloading instead.');
+                };
+            } else if (mediaCategory === 'image') {
+                // Show image viewer
+                imageViewer.src = url;
+                imageViewer.style.display = 'block';
+                resultTitle.textContent = '✅ Your Image is Ready!';
+                downloadLink.textContent = '📥 Download Image';
+                console.log('🖼️ Showing image viewer');
+
+                // Error handling for image viewer
+                imageViewer.onerror = function(e) {
+                    console.error('❌ Image viewer error:', e);
+                    showError('Failed to load image. Please try downloading instead.');
                 };
             } else {
                 // Show video player (default)

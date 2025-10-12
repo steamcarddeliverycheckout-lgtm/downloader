@@ -314,27 +314,6 @@ async function handleIncomingMessage(event) {
             attributes: attributes.map(attr => attr.className).join(', ')
         });
 
-        // FILTER OUT IMAGES/PHOTOS - Bot sends thumbnails before videos
-        if (mimeType.includes('image/')) {
-            console.log('🖼️ Ignoring image/thumbnail (waiting for actual video/audio)');
-            return;
-        }
-
-        // Filter out documents that are not media
-        const hasImageAttribute = attributes.some(attr =>
-            attr.className === 'DocumentAttributeImageSize'
-        );
-        const hasVideoOrAudioAttribute = attributes.some(attr =>
-            attr.className === 'DocumentAttributeVideo' ||
-            attr.className === 'DocumentAttributeAudio'
-        );
-
-        // If it has image attribute but no video/audio attribute, skip it
-        if (hasImageAttribute && !hasVideoOrAudioAttribute) {
-            console.log('🖼️ Ignoring image document (has DocumentAttributeImageSize only)');
-            return;
-        }
-
         // Check for VIDEO
         const isVideo = attributes.some(attr => attr.className === 'DocumentAttributeVideo') ||
                         mimeType.includes('video');
@@ -348,14 +327,19 @@ async function handleIncomingMessage(event) {
                         mimeType.includes('wav') ||
                         mimeType.includes('m4a');
 
+        // Check for IMAGE (JPEG, PNG, GIF, WEBP, etc.)
+        const isImage = mimeType.includes('image/') ||
+                        attributes.some(attr => attr.className === 'DocumentAttributeImageSize');
+
         console.log('🎯 Media type detection:', {
             isVideo: isVideo,
             isAudio: isAudio,
-            finalType: isVideo ? 'VIDEO' : (isAudio ? 'AUDIO' : 'UNKNOWN')
+            isImage: isImage,
+            finalType: isVideo ? 'VIDEO' : (isAudio ? 'AUDIO' : (isImage ? 'IMAGE' : 'UNKNOWN'))
         });
 
-        // Handle edge case: if neither video nor audio detected, try to infer from MIME type
-        if (!isVideo && !isAudio) {
+        // Handle edge case: if no media type detected, try to infer from MIME type
+        if (!isVideo && !isAudio && !isImage) {
             console.warn('⚠️ Unknown media type, attempting to infer from MIME type:', mimeType);
 
             // Check if MIME type suggests it's a media file
@@ -365,35 +349,30 @@ async function handleIncomingMessage(event) {
             } else if (mimeType.includes('audio') || mimeType.includes('mpeg')) {
                 console.log('✅ Inferring as AUDIO based on MIME type');
                 isAudio = true;
+            } else if (mimeType.includes('image')) {
+                console.log('✅ Inferring as IMAGE based on MIME type');
+                isImage = true;
             } else {
                 console.error('❌ Cannot determine media type, ignoring message');
-                console.log('💡 This might be a non-media document. Waiting for actual video/audio...');
-                return; // Not a video or audio
+                console.log('💡 This might be a non-media document. Waiting for actual media...');
+                return; // Not a video, audio, or image
             }
         }
 
         // If still can't determine, ignore
-        if (!isVideo && !isAudio) {
+        if (!isVideo && !isAudio && !isImage) {
             console.error('❌ Media type detection failed completely');
             console.log('💡 Skipping this message and waiting for actual media file...');
-            return; // Not a video or audio
-        }
-
-        // FINAL VALIDATION: Check file size (should be reasonable for video/audio)
-        const fileSize = message.media.document.size;
-        if (fileSize < 10000) { // Less than 10KB - probably not a real video/audio
-            console.warn('⚠️ File too small for video/audio:', (fileSize / 1024).toFixed(2), 'KB');
-            console.log('💡 This is likely a thumbnail or metadata file. Waiting for actual media...');
-            return;
+            return; // Not a video, audio, or image
         }
 
         // STEP 5: WE HAVE MEDIA FROM @Ebenozdownbot - DOWNLOAD IT!
-        const mediaType = isVideo ? 'VIDEO' : 'AUDIO';
+        const mediaType = isVideo ? 'VIDEO' : (isAudio ? 'AUDIO' : 'IMAGE');
         console.log(`🎯 ${mediaType} FOUND from @Ebenozdownbot! Starting download...`);
         console.log(`📦 Size: ${(message.media.document.size / 1024 / 1024).toFixed(2)} MB`);
 
         // Get file extension based on mime type
-        let fileExt = '.mp4';
+        let fileExt = '.jpg'; // Default
         let filePrefix = 'media';
 
         if (isVideo) {
@@ -413,6 +392,15 @@ async function handleIncomingMessage(event) {
             else if (mimeType.includes('audio/flac')) fileExt = '.flac';
             else if (mimeType.includes('audio/opus')) fileExt = '.opus';
             else fileExt = '.mp3'; // Default to mp3 for unknown audio types
+        } else if (isImage) {
+            filePrefix = 'image';
+            if (mimeType.includes('image/jpeg') || mimeType.includes('image/jpg')) fileExt = '.jpg';
+            else if (mimeType.includes('image/png')) fileExt = '.png';
+            else if (mimeType.includes('image/gif')) fileExt = '.gif';
+            else if (mimeType.includes('image/webp')) fileExt = '.webp';
+            else if (mimeType.includes('image/bmp')) fileExt = '.bmp';
+            else if (mimeType.includes('image/svg')) fileExt = '.svg';
+            else fileExt = '.jpg'; // Default to jpg for unknown image types
         }
 
         const fileName = `${filePrefix}_${Date.now()}${fileExt}`;
@@ -436,8 +424,8 @@ async function handleIncomingMessage(event) {
             await fastDownloadMedia(client, message.media, filePath);
 
             const downloadInfo = {
-                type: isAudio ? 'audio' : 'video',
-                mediaType: mediaType.toLowerCase(), // 'video' or 'audio'
+                type: isAudio ? 'audio' : (isImage ? 'image' : 'video'),
+                mediaType: mediaType.toLowerCase(), // 'video', 'audio', or 'image'
                 fileName: fileName,
                 url: `/downloads/${fileName}`,
                 timestamp: Date.now()
@@ -872,6 +860,20 @@ app.get('/downloads/:filename', (req, res) => {
         mimeType = 'audio/flac';
     } else if (ext === '.opus') {
         mimeType = 'audio/opus';
+    }
+    // Image MIME types
+    else if (ext === '.jpg' || ext === '.jpeg') {
+        mimeType = 'image/jpeg';
+    } else if (ext === '.png') {
+        mimeType = 'image/png';
+    } else if (ext === '.gif') {
+        mimeType = 'image/gif';
+    } else if (ext === '.webp') {
+        mimeType = 'image/webp';
+    } else if (ext === '.bmp') {
+        mimeType = 'image/bmp';
+    } else if (ext === '.svg') {
+        mimeType = 'image/svg+xml';
     }
 
     // Check if download is requested (vs just playing)
