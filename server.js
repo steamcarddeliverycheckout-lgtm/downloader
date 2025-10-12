@@ -29,10 +29,6 @@ let reconnectTimeout = null;
 
 // Optimized download function with DC migration support
 async function fastDownloadMedia(client, media, filePath) {
-    const writeStream = fs.createWriteStream(filePath, {
-        highWaterMark: 2 * 1024 * 1024  // 2MB buffer for faster writes
-    });
-
     const fileSize = media.document.size;
     const startTime = Date.now();
     let lastLogTime = startTime;
@@ -41,11 +37,9 @@ async function fastDownloadMedia(client, media, filePath) {
     console.log(`📦 Optimized download started (${(fileSize / 1024 / 1024).toFixed(2)} MB)`);
 
     try {
-        // Use library's built-in downloadMedia with optimal settings
-        // It automatically handles DC migration and connection issues
-        await client.downloadMedia(media, {
-            outputFile: writeStream,
-            workers: 16,  // Maximum parallel workers for speed
+        // Download to buffer first with maximum workers (faster than streaming to disk)
+        const buffer = await client.downloadMedia(media, {
+            workers: 32,  // Increased to maximum
             progressCallback: (downloaded, total) => {
                 const now = Date.now();
                 const currentProgress = ((downloaded / total) * 100).toFixed(1);
@@ -63,12 +57,8 @@ async function fastDownloadMedia(client, media, filePath) {
             }
         });
 
-        // Ensure stream is closed
-        writeStream.end();
-        await new Promise((resolve, reject) => {
-            writeStream.on('finish', resolve);
-            writeStream.on('error', reject);
-        });
+        // Write buffer to file in one go (much faster)
+        fs.writeFileSync(filePath, buffer, { flag: 'w' });
 
         const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
         const avgSpeed = (fileSize / 1024 / 1024 / totalTime).toFixed(2);
@@ -77,7 +67,6 @@ async function fastDownloadMedia(client, media, filePath) {
         return true;
     } catch (error) {
         console.error('❌ Download failed:', error.message);
-        writeStream.destroy();
         if (fs.existsSync(filePath)) {
             fs.unlinkSync(filePath);
         }
