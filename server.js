@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const { TelegramClient } = require('telegram');
 const { StringSession } = require('telegram/sessions');
-const { NewMessage, EditedMessage } = require('telegram/events');
+const { NewMessage } = require('telegram/events');
 const input = require('input');
 const path = require('path');
 const fs = require('fs');
@@ -118,14 +118,11 @@ async function initTelegram() {
         console.log('Session String:', client.session.save());
         isConnected = true;
 
-        // Listen for ALL incoming messages (not just specific chat)
-        // This catches messages from channels, groups, and direct chats
+        // Listen for ALL incoming messages (including edited ones)
+        // NewMessage event catches both new and edited messages in gramJS
         client.addEventHandler(handleIncomingMessage, new NewMessage({}));
 
-        // ALSO listen for EDITED messages (bot edits progress message to video)
-        client.addEventHandler(handleIncomingMessage, new EditedMessage({}));
-
-        console.log('🎧 Listening to ALL new AND edited messages from ALL chats');
+        console.log('🎧 Listening to ALL messages (new + edited) from ALL chats');
 
         // Keep connection alive with ping
         startKeepAlive();
