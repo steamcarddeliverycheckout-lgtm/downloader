@@ -33,38 +33,29 @@ let lastFormatMessage = null; // Store the last bot message with format buttons
 async function fastDownloadMedia(client, media, filePath) {
     const fileSize = media.document.size;
     const startTime = Date.now();
-    let lastLogTime = startTime;
-    let lastProgress = 0;
 
-    console.log(`📦 Optimized download started (${(fileSize / 1024 / 1024).toFixed(2)} MB)`);
+    console.log(`📦 Starting download: ${(fileSize / 1024 / 1024).toFixed(2)} MB`);
 
     try {
-        // Download to buffer first with maximum workers (faster than streaming to disk)
+        // Download to buffer with maximum workers (faster than streaming to disk)
         const buffer = await client.downloadMedia(media, {
-            workers: 32,  // Increased to maximum
+            workers: 32,  // Maximum parallel workers
             progressCallback: (downloaded, total) => {
-                const now = Date.now();
-                const currentProgress = ((downloaded / total) * 100).toFixed(1);
-
-                // Log every 2 seconds or every 10% progress
-                if (now - lastLogTime > 2000 || (currentProgress - lastProgress >= 10)) {
-                    const speed = (downloaded / 1024 / 1024) / ((now - startTime) / 1000);
-                    const remaining = total - downloaded;
-                    const eta = remaining > 0 ? (remaining / (downloaded / ((now - startTime) / 1000))).toFixed(0) : 0;
-
-                    console.log(`⏬ ${currentProgress}% | ${speed.toFixed(2)} MB/s | ETA: ${eta}s`);
-                    lastLogTime = now;
-                    lastProgress = currentProgress;
+                // Only log at 25%, 50%, 75% to reduce overhead
+                const progress = ((downloaded / total) * 100).toFixed(0);
+                if (progress === '25' || progress === '50' || progress === '75') {
+                    const speed = (downloaded / 1024 / 1024) / ((Date.now() - startTime) / 1000);
+                    console.log(`⏬ ${progress}% | ${speed.toFixed(1)} MB/s`);
                 }
             }
         });
 
-        // Write buffer to file in one go (much faster)
+        // Write buffer to file in one go (much faster than streaming)
         fs.writeFileSync(filePath, buffer, { flag: 'w' });
 
-        const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
+        const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
         const avgSpeed = (fileSize / 1024 / 1024 / totalTime).toFixed(2);
-        console.log(`✅ Download completed in ${totalTime}s (Avg: ${avgSpeed} MB/s)`);
+        console.log(`✅ Downloaded in ${totalTime}s (${avgSpeed} MB/s)`);
 
         return true;
     } catch (error) {
@@ -299,39 +290,63 @@ async function handleIncomingMessage(event) {
             }
         }
 
-        // STEP 3: Check if we're waiting for a video download
-        const waitingForVideo = pendingDownloads.size > 0 ||
+        // STEP 3: Check if we're waiting for a media download
+        const waitingForMedia = pendingDownloads.size > 0 ||
             Array.from(downloadProgress.values()).some(p => !p.complete);
 
-        if (!waitingForVideo) {
-            return; // Not expecting any video
+        if (!waitingForMedia) {
+            return; // Not expecting any media
         }
 
-        // STEP 4: Check if this message contains a video
+        // STEP 4: Check if this message contains a video or audio
         if (!message.media || !message.media.document) {
-            return; // No video here
+            return; // No media here
         }
 
         const mimeType = message.media.document.mimeType || '';
         const attributes = message.media.document.attributes || [];
+
+        // Check for VIDEO
         const isVideo = attributes.some(attr => attr.className === 'DocumentAttributeVideo') ||
                         mimeType.includes('video');
 
-        if (!isVideo) {
-            return; // Not a video
+        // Check for AUDIO (MP3, M4A, OGG, WAV, etc.)
+        const isAudio = attributes.some(attr => attr.className === 'DocumentAttributeAudio') ||
+                        mimeType.includes('audio') ||
+                        mimeType.includes('mpeg') ||
+                        mimeType.includes('mp3') ||
+                        mimeType.includes('ogg') ||
+                        mimeType.includes('wav') ||
+                        mimeType.includes('m4a');
+
+        if (!isVideo && !isAudio) {
+            return; // Not a video or audio
         }
 
-        // STEP 5: WE HAVE A VIDEO FROM @Ebenozdownbot - DOWNLOAD IT!
-        console.log('🎯 VIDEO FOUND from @Ebenozdownbot! Starting download...');
+        // STEP 5: WE HAVE MEDIA FROM @Ebenozdownbot - DOWNLOAD IT!
+        const mediaType = isVideo ? 'VIDEO' : 'AUDIO';
+        console.log(`🎯 ${mediaType} FOUND from @Ebenozdownbot! Starting download...`);
         console.log(`📦 Size: ${(message.media.document.size / 1024 / 1024).toFixed(2)} MB`);
 
-        // Get file extension
+        // Get file extension based on mime type
         let fileExt = '.mp4';
-        if (mimeType.includes('video/webm')) fileExt = '.webm';
-        else if (mimeType.includes('video/mp4')) fileExt = '.mp4';
-        else if (mimeType.includes('video/quicktime')) fileExt = '.mov';
+        let filePrefix = 'media';
 
-        const fileName = `video_${Date.now()}${fileExt}`;
+        if (isVideo) {
+            filePrefix = 'video';
+            if (mimeType.includes('video/webm')) fileExt = '.webm';
+            else if (mimeType.includes('video/mp4')) fileExt = '.mp4';
+            else if (mimeType.includes('video/quicktime')) fileExt = '.mov';
+        } else if (isAudio) {
+            filePrefix = 'audio';
+            if (mimeType.includes('audio/mpeg') || mimeType.includes('mp3')) fileExt = '.mp3';
+            else if (mimeType.includes('audio/ogg')) fileExt = '.ogg';
+            else if (mimeType.includes('audio/wav')) fileExt = '.wav';
+            else if (mimeType.includes('audio/m4a') || mimeType.includes('audio/mp4')) fileExt = '.m4a';
+            else if (mimeType.includes('audio/aac')) fileExt = '.aac';
+        }
+
+        const fileName = `${filePrefix}_${Date.now()}${fileExt}`;
         const filePath = path.join(__dirname, 'public', 'downloads', fileName);
 
         // Create downloads directory
@@ -341,17 +356,18 @@ async function handleIncomingMessage(event) {
         }
 
         try {
-            // Download the video
+            // Download the media
             await fastDownloadMedia(client, message.media, filePath);
 
             const downloadInfo = {
-                type: 'video',
+                type: isAudio ? 'audio' : 'video',
+                mediaType: mediaType.toLowerCase(), // 'video' or 'audio'
                 fileName: fileName,
                 url: `/downloads/${fileName}`,
                 timestamp: Date.now()
             };
 
-            console.log('✅ Video downloaded successfully!');
+            console.log(`✅ ${mediaType} downloaded successfully!`);
 
             // Resolve ALL pending requests
             for (let [key, resolve] of pendingDownloads.entries()) {
@@ -750,14 +766,27 @@ app.get('/downloads/:filename', (req, res) => {
 
     // Get file extension and set proper MIME type
     const ext = path.extname(filename).toLowerCase();
-    let mimeType = 'video/mp4'; // default
+    let mimeType = 'application/octet-stream'; // default
 
+    // Video MIME types
     if (ext === '.webm') {
         mimeType = 'video/webm';
     } else if (ext === '.mov') {
         mimeType = 'video/quicktime';
     } else if (ext === '.mp4') {
         mimeType = 'video/mp4';
+    }
+    // Audio MIME types
+    else if (ext === '.mp3') {
+        mimeType = 'audio/mpeg';
+    } else if (ext === '.ogg') {
+        mimeType = 'audio/ogg';
+    } else if (ext === '.wav') {
+        mimeType = 'audio/wav';
+    } else if (ext === '.m4a') {
+        mimeType = 'audio/mp4';
+    } else if (ext === '.aac') {
+        mimeType = 'audio/aac';
     }
 
     // Check if download is requested (vs just playing)

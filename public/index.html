@@ -145,7 +145,7 @@
             margin-bottom: 15px;
         }
 
-        video {
+        video, audio {
             width: 100%;
             max-width: 100%;
             border-radius: 10px;
@@ -363,11 +363,12 @@
         <!-- Error Message -->
         <div class="error" id="error"></div>
 
-        <!-- Video Result -->
+        <!-- Media Result -->
         <div class="result" id="result">
-            <h3>✅ Your Video is Ready!</h3>
-            <video id="videoPlayer" controls></video>
-            <a href="#" id="downloadLink" class="download-btn" download>📥 Download Video</a>
+            <h3 id="resultTitle">✅ Your Media is Ready!</h3>
+            <video id="videoPlayer" controls style="display:none;"></video>
+            <audio id="audioPlayer" controls style="display:none;"></audio>
+            <a href="#" id="downloadLink" class="download-btn" download>📥 Download</a>
         </div>
 
         <!-- Status -->
@@ -464,17 +465,9 @@
                     const data = await response.json();
 
                     if (data.success) {
-                        // Show video
-                        const videoPlayer = document.getElementById('videoPlayer');
-                        const downloadLink = document.getElementById('downloadLink');
-
-                        videoPlayer.src = data.videoUrl;
-                        // Add download parameter to force download
-                        downloadLink.href = data.videoUrl + '?download=true';
-                        downloadLink.download = data.fileName;
-
+                        // Show media (video or audio)
                         hideLoading();
-                        showResult();
+                        showMedia(data.videoUrl, data.fileName, data.mediaType);
                     } else {
                         throw new Error(data.error || 'Download failed');
                     }
@@ -598,16 +591,8 @@
                             hideProgress();
 
                             if (data.success && data.videoUrl) {
-                                // Show video result
-                                const videoPlayer = document.getElementById('videoPlayer');
-                                const downloadLink = document.getElementById('downloadLink');
-
-                                videoPlayer.src = data.videoUrl;
-                                // Add download parameter to force download
-                                downloadLink.href = data.videoUrl + '?download=true';
-                                downloadLink.download = data.fileName;
-
-                                showResult();
+                                // Show media (video or audio)
+                                showMedia(data.videoUrl, data.fileName, data.mediaType);
                             } else {
                                 showError(data.error || 'Download failed');
                             }
@@ -640,6 +625,40 @@
         }
 
         // UI Helper Functions
+        function showMedia(url, fileName, mediaType) {
+            const videoPlayer = document.getElementById('videoPlayer');
+            const audioPlayer = document.getElementById('audioPlayer');
+            const downloadLink = document.getElementById('downloadLink');
+            const resultTitle = document.getElementById('resultTitle');
+
+            // Determine if it's audio or video
+            const isAudio = mediaType === 'audio' || fileName.match(/\.(mp3|ogg|wav|m4a|aac)$/i);
+
+            // Hide both players first
+            videoPlayer.style.display = 'none';
+            audioPlayer.style.display = 'none';
+
+            if (isAudio) {
+                // Show audio player
+                audioPlayer.src = url;
+                audioPlayer.style.display = 'block';
+                resultTitle.textContent = '✅ Your Audio is Ready!';
+                downloadLink.textContent = '📥 Download Audio';
+            } else {
+                // Show video player
+                videoPlayer.src = url;
+                videoPlayer.style.display = 'block';
+                resultTitle.textContent = '✅ Your Video is Ready!';
+                downloadLink.textContent = '📥 Download Video';
+            }
+
+            // Add download parameter to force download
+            downloadLink.href = url + '?download=true';
+            downloadLink.download = fileName;
+
+            showResult();
+        }
+
         function showLoading() {
             document.getElementById('loading').classList.add('active');
         }
