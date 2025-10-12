@@ -30,8 +30,12 @@ let downloadProgress = new Map(); // Store download progress by request ID
 let lastFormatMessage = null; // Store the last bot message with format buttons
 
 // Optimized download function with DC migration support
-async function fastDownloadMedia(client, media, filePath) {
-    const fileSize = media.document.size;
+async function fastDownloadMedia(client, fileEntity, filePath) {
+    // Support raw Document, MessageMedia.document, or WebPage.document
+    const doc = (fileEntity && fileEntity.document)
+        ? fileEntity.document
+        : fileEntity;
+    const fileSize = (doc && doc.size) ? doc.size : 0;
     const startTime = Date.now();
     let lastLogTime = startTime;
     let lastProgress = 0;
@@ -40,7 +44,7 @@ async function fastDownloadMedia(client, media, filePath) {
 
     try {
         // Download to buffer first with maximum workers (faster than streaming to disk)
-        const buffer = await client.downloadMedia(media, {
+        const buffer = await client.downloadMedia(doc || fileEntity, {
             workers: 32,  // Increased to maximum
             progressCallback: (downloaded, total) => {
                 const now = Date.now();
@@ -248,13 +252,19 @@ async function handleIncomingMessage(event) {
             return; // Not expecting any video
         }
 
-        // STEP 4: Check if this message contains a video
-        if (!message.media || !message.media.document) {
-            return; // No video here
+        // STEP 4: Check if this message contains a video (Document or WebPage.document)
+        if (!message.media) {
+            return; // No media at all
         }
 
-        const mimeType = message.media.document.mimeType || '';
-        const attributes = message.media.document.attributes || [];
+        const media = message.media;
+        const doc = media.document || (media.webpage && media.webpage.document) || null;
+        if (!doc) {
+            return; // No downloadable document here
+        }
+
+        const mimeType = doc.mimeType || '';
+        const attributes = doc.attributes || [];
 
         // Determine if the document is likely a video
         const hasVideoAttribute = attributes.some(attr => attr.className === 'DocumentAttributeVideo');
@@ -272,7 +282,7 @@ async function handleIncomingMessage(event) {
 
         // STEP 5: WE HAVE A VIDEO FROM @Ebenozdownbot - DOWNLOAD IT!
         console.log('🎯 VIDEO FOUND from @Ebenozdownbot! Starting download...');
-        console.log(`📦 Size: ${(message.media.document.size / 1024 / 1024).toFixed(2)} MB`);
+        console.log(`📦 Size: ${(doc.size / 1024 / 1024).toFixed(2)} MB`);
 
         // Get file extension (prefer from filename attribute)
         let fileExt = '.mp4';
@@ -293,7 +303,7 @@ async function handleIncomingMessage(event) {
 
         try {
             // Download the video
-            await fastDownloadMedia(client, message.media, filePath);
+            await fastDownloadMedia(client, doc, filePath);
 
             const downloadInfo = {
                 type: 'video',
