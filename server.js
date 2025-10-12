@@ -175,9 +175,23 @@ async function handleIncomingMessage(event) {
 
         if (!message) return;
 
+        // LOG ALL MESSAGES FOR DEBUGGING
+        console.log('📬 RAW MESSAGE RECEIVED:', {
+            id: message.id,
+            chatId: message.chatId,
+            hasMedia: !!message.media,
+            mediaType: message.media?.className || 'none',
+            hasText: !!message.text,
+            textPreview: message.text?.substring(0, 50) || 'no text'
+        });
+
         // Check if message is from the bot
         const sender = await message.getSender();
+        const senderUsername = sender?.username || 'unknown';
+        console.log('👤 Message sender:', senderUsername);
+
         if (sender && sender.username === botUsername.replace('@', '')) {
+            console.log('✅ Message confirmed from target bot:', botUsername);
 
             // Check if it's a text message with format information
             if (message.text) {
@@ -342,6 +356,78 @@ async function handleIncomingMessage(event) {
                             value.complete = true;
                             value.success = false;
                             value.error = 'Download failed';
+                        }
+                    }
+                }
+            }
+        }
+
+        // FALLBACK: If we're waiting for a download and ANY video comes, accept it
+        // (Bot might send from different context)
+        if (!sender || sender.username !== botUsername.replace('@', '')) {
+            console.log('⚠️ Message NOT from target bot, but checking if video...');
+
+            // Only accept if we have pending downloads
+            if (pendingDownloads.size > 0 && message.media && message.media.document) {
+                const mimeType = message.media.document.mimeType || '';
+                if (mimeType.includes('video')) {
+                    console.log('🎯 FALLBACK: Found video from different sender while waiting for download!');
+                    console.log('📦 Accepting video from:', senderUsername);
+
+                    const attributes = message.media.document.attributes || [];
+                    const isVideo = attributes.some(attr =>
+                        attr.className === 'DocumentAttributeVideo'
+                    );
+                    const isVideoMime = mimeType.includes('video');
+
+                    if (isVideo || isVideoMime) {
+                        console.log('✅ FALLBACK: Processing video...');
+
+                        // Get proper file extension from mime type
+                        let fileExt = '.mp4';
+                        if (mimeType.includes('video/webm')) fileExt = '.webm';
+                        else if (mimeType.includes('video/mp4')) fileExt = '.mp4';
+                        else if (mimeType.includes('video/quicktime')) fileExt = '.mov';
+
+                        // Save video temporarily
+                        const fileName = `video_${Date.now()}${fileExt}`;
+                        const filePath = path.join(__dirname, 'public', 'downloads', fileName);
+
+                        // Create downloads directory if it doesn't exist
+                        if (!fs.existsSync(path.join(__dirname, 'public', 'downloads'))) {
+                            fs.mkdirSync(path.join(__dirname, 'public', 'downloads'), { recursive: true });
+                        }
+
+                        try {
+                            // Download video
+                            await fastDownloadMedia(client, message.media, filePath);
+
+                            // Store the download info
+                            const downloadInfo = {
+                                type: 'video',
+                                fileName: fileName,
+                                url: `/downloads/${fileName}`,
+                                timestamp: Date.now()
+                            };
+
+                            // Resolve first pending download
+                            for (let [key, resolve] of pendingDownloads.entries()) {
+                                resolve(downloadInfo);
+                                pendingDownloads.delete(key);
+
+                                // Update progress
+                                if (downloadProgress.has(key)) {
+                                    downloadProgress.get(key).progress = 100;
+                                    downloadProgress.get(key).complete = true;
+                                    downloadProgress.get(key).success = true;
+                                    downloadProgress.get(key).videoUrl = downloadInfo.url;
+                                    downloadProgress.get(key).fileName = downloadInfo.fileName;
+                                    console.log(`✅ FALLBACK: Updated progress for request ${key}`);
+                                }
+                                break;
+                            }
+                        } catch (downloadError) {
+                            console.error('❌ FALLBACK: Download failed:', downloadError);
                         }
                     }
                 }
