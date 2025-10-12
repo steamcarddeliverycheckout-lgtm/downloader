@@ -206,6 +206,120 @@
             background: #ffebee;
             color: #c62828;
         }
+
+        /* Format Selection */
+        .format-selection {
+            display: none;
+            margin-top: 20px;
+            padding: 20px;
+            background: #f5f5f5;
+            border-radius: 10px;
+        }
+
+        .format-selection.active {
+            display: block;
+            animation: fadeIn 0.5s;
+        }
+
+        .format-selection h3 {
+            color: #333;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        .format-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        .format-btn {
+            padding: 15px;
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-align: center;
+        }
+
+        .format-btn:hover {
+            border-color: #667eea;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+        }
+
+        .format-btn.selected {
+            border-color: #667eea;
+            background: #667eea;
+            color: white;
+        }
+
+        .format-quality {
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+
+        .format-size {
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .format-btn.selected .format-size {
+            color: #fff;
+        }
+
+        /* Progress Bar */
+        .progress-container {
+            display: none;
+            margin-top: 20px;
+            padding: 20px;
+            background: #f5f5f5;
+            border-radius: 10px;
+        }
+
+        .progress-container.active {
+            display: block;
+            animation: fadeIn 0.5s;
+        }
+
+        .progress-title {
+            text-align: center;
+            color: #333;
+            margin-bottom: 15px;
+            font-weight: bold;
+        }
+
+        .progress-bar-bg {
+            width: 100%;
+            height: 30px;
+            background: #e0e0e0;
+            border-radius: 15px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .progress-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            transition: width 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 0.9rem;
+        }
+
+        .progress-info {
+            margin-top: 10px;
+            text-align: center;
+            color: #666;
+            font-size: 0.9rem;
+        }
     </style>
 </head>
 <body>
@@ -228,6 +342,24 @@
             <div class="loading-text">Processing your request...</div>
         </div>
 
+        <!-- Format Selection for YouTube -->
+        <div class="format-selection" id="formatSelection">
+            <h3>📹 Select Quality</h3>
+            <div class="format-grid" id="formatGrid">
+                <!-- Formats will be populated here -->
+            </div>
+            <button onclick="downloadSelectedFormat()" id="formatDownloadBtn">Download Selected Format</button>
+        </div>
+
+        <!-- Progress Bar -->
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-title" id="progressTitle">📥 Downloading...</div>
+            <div class="progress-bar-bg">
+                <div class="progress-bar-fill" id="progressBarFill">0%</div>
+            </div>
+            <div class="progress-info" id="progressInfo">Please wait...</div>
+        </div>
+
         <!-- Error Message -->
         <div class="error" id="error"></div>
 
@@ -243,6 +375,15 @@
     </div>
 
     <script>
+        let currentUrl = '';
+        let selectedFormat = null;
+        let availableFormats = [];
+
+        // Check if URL is YouTube
+        function isYouTubeUrl(url) {
+            return url.includes('youtube.com') || url.includes('youtu.be');
+        }
+
         // Check server status on load
         async function checkStatus() {
             try {
@@ -274,36 +415,63 @@
                 return;
             }
 
+            currentUrl = url;
+
             // Reset UI
             hideError();
             hideResult();
+            hideFormatSelection();
+            hideProgress();
             showLoading();
             document.getElementById('downloadBtn').disabled = true;
 
             try {
-                const response = await fetch('/api/download', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({ url })
-                });
+                // Check if YouTube URL
+                if (isYouTubeUrl(url)) {
+                    // Request formats from backend
+                    const response = await fetch('/api/youtube/formats', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ url })
+                    });
 
-                const data = await response.json();
+                    const data = await response.json();
 
-                if (data.success) {
-                    // Show video
-                    const videoPlayer = document.getElementById('videoPlayer');
-                    const downloadLink = document.getElementById('downloadLink');
-
-                    videoPlayer.src = data.videoUrl;
-                    downloadLink.href = data.videoUrl;
-                    downloadLink.download = data.fileName;
-
-                    hideLoading();
-                    showResult();
+                    if (data.success && data.formats) {
+                        availableFormats = data.formats;
+                        hideLoading();
+                        showFormatSelection(data.formats);
+                    } else {
+                        throw new Error(data.error || 'Failed to get formats');
+                    }
                 } else {
-                    throw new Error(data.error || 'Download failed');
+                    // Non-YouTube URL (Instagram, TikTok, etc.)
+                    const response = await fetch('/api/download', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ url })
+                    });
+
+                    const data = await response.json();
+
+                    if (data.success) {
+                        // Show video
+                        const videoPlayer = document.getElementById('videoPlayer');
+                        const downloadLink = document.getElementById('downloadLink');
+
+                        videoPlayer.src = data.videoUrl;
+                        downloadLink.href = data.videoUrl;
+                        downloadLink.download = data.fileName;
+
+                        hideLoading();
+                        showResult();
+                    } else {
+                        throw new Error(data.error || 'Download failed');
+                    }
                 }
             } catch (error) {
                 hideLoading();
@@ -311,6 +479,124 @@
             } finally {
                 document.getElementById('downloadBtn').disabled = false;
             }
+        }
+
+        // Show format selection UI
+        function showFormatSelection(formats) {
+            const formatGrid = document.getElementById('formatGrid');
+            formatGrid.innerHTML = '';
+
+            formats.forEach((format, index) => {
+                const formatBtn = document.createElement('div');
+                formatBtn.className = 'format-btn';
+                formatBtn.onclick = () => selectFormat(index);
+                formatBtn.innerHTML = `
+                    <div class="format-quality">📹 ${format.quality}</div>
+                    <div class="format-size">💾 ${format.size}</div>
+                `;
+                formatGrid.appendChild(formatBtn);
+            });
+
+            document.getElementById('formatSelection').classList.add('active');
+        }
+
+        // Select a format
+        function selectFormat(index) {
+            selectedFormat = index;
+            const formatBtns = document.querySelectorAll('.format-btn');
+            formatBtns.forEach((btn, i) => {
+                if (i === index) {
+                    btn.classList.add('selected');
+                } else {
+                    btn.classList.remove('selected');
+                }
+            });
+        }
+
+        // Download selected format
+        async function downloadSelectedFormat() {
+            if (selectedFormat === null) {
+                showError('Please select a format');
+                return;
+            }
+
+            const format = availableFormats[selectedFormat];
+
+            hideFormatSelection();
+            showProgress();
+            updateProgress(0, `Starting download: ${format.quality}...`);
+
+            try {
+                const response = await fetch('/api/youtube/download', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        url: currentUrl,
+                        format: format.quality
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Download failed');
+                }
+
+                // Start polling for progress
+                const requestId = Date.now();
+                pollDownloadProgress(requestId);
+
+            } catch (error) {
+                hideProgress();
+                showError(error.message || 'Download failed');
+            }
+        }
+
+        // Poll download progress
+        async function pollDownloadProgress(requestId) {
+            const interval = setInterval(async () => {
+                try {
+                    const response = await fetch(`/api/youtube/progress/${requestId}`);
+                    const data = await response.json();
+
+                    if (data.progress !== undefined) {
+                        updateProgress(data.progress, data.status);
+
+                        if (data.complete) {
+                            clearInterval(interval);
+                            hideProgress();
+
+                            if (data.success) {
+                                // Show video result
+                                const videoPlayer = document.getElementById('videoPlayer');
+                                const downloadLink = document.getElementById('downloadLink');
+
+                                videoPlayer.src = data.videoUrl;
+                                downloadLink.href = data.videoUrl;
+                                downloadLink.download = data.fileName;
+
+                                showResult();
+                            } else {
+                                showError(data.error || 'Download failed');
+                            }
+                        }
+                    }
+                } catch (error) {
+                    clearInterval(interval);
+                    hideProgress();
+                    showError('Failed to get progress');
+                }
+            }, 1000); // Poll every second
+        }
+
+        // Update progress bar
+        function updateProgress(percentage, message) {
+            const progressFill = document.getElementById('progressBarFill');
+            const progressInfo = document.getElementById('progressInfo');
+
+            progressFill.style.width = percentage + '%';
+            progressFill.textContent = Math.round(percentage) + '%';
+            progressInfo.textContent = message || 'Downloading...';
         }
 
         // UI Helper Functions
@@ -328,6 +614,22 @@
 
         function hideResult() {
             document.getElementById('result').classList.remove('active');
+        }
+
+        function showFormatSelection() {
+            document.getElementById('formatSelection').classList.add('active');
+        }
+
+        function hideFormatSelection() {
+            document.getElementById('formatSelection').classList.remove('active');
+        }
+
+        function showProgress() {
+            document.getElementById('progressContainer').classList.add('active');
+        }
+
+        function hideProgress() {
+            document.getElementById('progressContainer').classList.remove('active');
         }
 
         function showError(message) {
