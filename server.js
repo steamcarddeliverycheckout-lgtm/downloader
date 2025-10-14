@@ -25,6 +25,7 @@ let client;
 let pendingDownloads = new Map();
 let isConnected = false;
 let reconnectTimeout = null;
+let isReconnecting = false; // Prevent concurrent reconnections
 let youtubeFormats = new Map(); // Store YouTube formats by URL
 let downloadProgress = new Map(); // Store download progress by request ID
 let lastFormatMessage = null; // Store the last bot message with format buttons
@@ -89,6 +90,15 @@ async function initTelegram() {
         // Handle connection errors
         client.on('error', (error) => {
             console.error('❌ Telegram client error:', error);
+
+            // Don't reconnect on AUTH_KEY_DUPLICATED
+            if (error.message && error.message.includes('AUTH_KEY_DUPLICATED')) {
+                console.error('🚨 AUTH_KEY_DUPLICATED in client error handler - NOT reconnecting');
+                isConnected = false;
+                isReconnecting = false;
+                return;
+            }
+
             isConnected = false;
             scheduleReconnect();
         });
@@ -109,6 +119,7 @@ async function initTelegram() {
         console.log('✅ Telegram client connected successfully!');
         console.log('Session String:', client.session.save());
         isConnected = true;
+        isReconnecting = false; // Reset reconnecting flag on success
 
         // Listen for ALL incoming messages (including edited ones)
         // NewMessage event catches both new and edited messages in gramJS
@@ -164,6 +175,28 @@ async function initTelegram() {
     } catch (error) {
         console.error('❌ Error initializing Telegram:', error);
         isConnected = false;
+        isReconnecting = false; // Reset flag on error
+
+        // Special handling for AUTH_KEY_DUPLICATED
+        if (error.message && error.message.includes('AUTH_KEY_DUPLICATED')) {
+            console.error('');
+            console.error('🚨🚨🚨 AUTH_KEY_DUPLICATED ERROR 🚨🚨🚨');
+            console.error('');
+            console.error('This means multiple instances are using the same session!');
+            console.error('');
+            console.error('SOLUTIONS:');
+            console.error('1. Check if another instance of this app is running');
+            console.error('2. Check Render.com dashboard - old deploy might be running');
+            console.error('3. Restart the application completely');
+            console.error('4. If issue persists, regenerate session string:');
+            console.error('   - Run: node generate-session.js');
+            console.error('   - Update TELEGRAM_SESSION in .env');
+            console.error('');
+            console.error('🛑 NOT scheduling reconnect to avoid loop');
+            console.error('');
+            return; // Don't schedule reconnect
+        }
+
         scheduleReconnect();
     }
 }
@@ -186,20 +219,64 @@ function startKeepAlive() {
 
 // Schedule reconnection
 function scheduleReconnect() {
+    // Prevent concurrent reconnection attempts
+    if (isReconnecting) {
+        console.log('⚠️ Reconnection already in progress, skipping...');
+        return;
+    }
+
     if (reconnectTimeout) {
         clearTimeout(reconnectTimeout);
     }
 
     reconnectTimeout = setTimeout(async () => {
+        if (isReconnecting) {
+            console.log('⚠️ Reconnection already in progress, aborting...');
+            return;
+        }
+
+        isReconnecting = true;
         console.log('🔄 Attempting to reconnect...');
+
         try {
+            // Properly disconnect existing client
             if (client) {
-                await client.disconnect();
+                try {
+                    console.log('🔌 Disconnecting old client...');
+                    await client.disconnect();
+                    await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s
+                    console.log('✅ Old client disconnected');
+                } catch (disconnectError) {
+                    console.error('⚠️ Error disconnecting:', disconnectError.message);
+                }
+                client = null; // Clear client reference
             }
+
+            // Wait a bit before reconnecting
+            await new Promise(resolve => setTimeout(resolve, 3000));
+
+            // Now try to reconnect
             await initTelegram();
+
         } catch (error) {
-            console.error('❌ Reconnection failed:', error);
-            scheduleReconnect();
+            console.error('❌ Reconnection failed:', error.message);
+            isReconnecting = false;
+
+            // If AUTH_KEY_DUPLICATED, don't retry automatically
+            if (error.message && error.message.includes('AUTH_KEY_DUPLICATED')) {
+                console.error('🚨 AUTH_KEY_DUPLICATED - Multiple instances detected!');
+                console.error('🛑 STOPPING reconnection attempts. Please check:');
+                console.error('   1. No other instances are running');
+                console.error('   2. Session string is not being used elsewhere');
+                console.error('   3. Restart the application');
+                return; // Don't schedule another reconnect
+            }
+
+            // Schedule another reconnect for other errors
+            setTimeout(() => {
+                isReconnecting = false;
+                scheduleReconnect();
+            }, 10000); // Wait 10s before retry
         }
     }, 5000);
 }
@@ -377,7 +454,7 @@ async function handleIncomingMessage(event) {
 
                 // Clean up after 5 seconds
                 setTimeout(() => {
-                    for (let [key] of Array.from(receivedMediaTypes.keys())) {
+                    for (let key of Array.from(receivedMediaTypes.keys())) {
                         receivedMediaTypes.delete(key);
                     }
                 }, 5000);
@@ -583,7 +660,7 @@ async function handleIncomingMessage(event) {
 
             // Clean up received media types after 5 seconds
             setTimeout(() => {
-                for (let [key] of Array.from(receivedMediaTypes.keys())) {
+                for (let key of Array.from(receivedMediaTypes.keys())) {
                     receivedMediaTypes.delete(key);
                 }
             }, 5000);
@@ -1063,36 +1140,56 @@ app.listen(PORT, async () => {
 process.on('SIGINT', async () => {
     console.log('\n👋 Shutting down...');
 
+    // Clear reconnect timeout
     if (reconnectTimeout) {
         clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
     }
 
-    if (client && isConnected) {
+    // Prevent reconnection during shutdown
+    isReconnecting = true;
+    isConnected = false;
+
+    // Disconnect client
+    if (client) {
         try {
+            console.log('🔌 Disconnecting Telegram client...');
             await client.disconnect();
+            console.log('✅ Telegram client disconnected');
         } catch (error) {
-            console.error('Error during disconnect:', error);
+            console.error('⚠️ Error during disconnect:', error.message);
         }
     }
 
+    console.log('👋 Shutdown complete');
     process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
     console.log('\n👋 Received SIGTERM, shutting down...');
 
+    // Clear reconnect timeout
     if (reconnectTimeout) {
         clearTimeout(reconnectTimeout);
+        reconnectTimeout = null;
     }
 
-    if (client && isConnected) {
+    // Prevent reconnection during shutdown
+    isReconnecting = true;
+    isConnected = false;
+
+    // Disconnect client
+    if (client) {
         try {
+            console.log('🔌 Disconnecting Telegram client...');
             await client.disconnect();
+            console.log('✅ Telegram client disconnected');
         } catch (error) {
-            console.error('Error during disconnect:', error);
+            console.error('⚠️ Error during disconnect:', error.message);
         }
     }
 
+    console.log('👋 Shutdown complete');
     process.exit(0);
 });
 
