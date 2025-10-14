@@ -69,131 +69,96 @@ async function fastDownloadMedia(client, media, filePath) {
     }
 }
 
+// Silent logger to suppress Telegram library logs
+class SilentLogger {
+    log() {} // Do nothing
+    info() {}
+    warn() {}
+    error() {}
+    debug() {}
+}
+
 // Initialize Telegram Client with better error handling
 async function initTelegram() {
     try {
-        console.log('🔄 Initializing Telegram client...');
+        console.log('🚀 Connecting...');
 
         client = new TelegramClient(stringSession, apiId, apiHash, {
             connectionRetries: 15,
-            retryDelay: 500,  // Faster retries
+            retryDelay: 300,  // Faster retries
             autoReconnect: true,
             useWSS: false,
-            timeout: 60000,  // Increased to 60s for large downloads
+            timeout: 60000,
             downloadRetries: 10,
             requestRetries: 5,
             floodSleepThreshold: 60,
             useIPv6: false,
-            baseLogger: undefined,  // Disable verbose logging for speed
+            baseLogger: new SilentLogger(),  // Completely silent
         });
 
         // Handle connection errors
         client.on('error', (error) => {
-            console.error('❌ Telegram client error:', error);
-
-            // Don't reconnect on AUTH_KEY_DUPLICATED
+            // Only log if AUTH_KEY_DUPLICATED or critical
             if (error.message && error.message.includes('AUTH_KEY_DUPLICATED')) {
-                console.error('🚨 AUTH_KEY_DUPLICATED in client error handler - NOT reconnecting');
+                console.error('🚨 AUTH_KEY_DUPLICATED');
                 isConnected = false;
                 isReconnecting = false;
                 return;
             }
-
             isConnected = false;
             scheduleReconnect();
         });
 
         await client.start({
-            phoneNumber: async () => {
-                console.log('Phone number required - using session string');
-                return '';
-            },
+            phoneNumber: async () => '',
             password: async () => '',
             phoneCode: async () => '',
             onError: (err) => {
-                console.error('Connection error:', err);
                 isConnected = false;
             },
         });
 
-        console.log('✅ Telegram client connected successfully!');
-        console.log('Session String:', client.session.save());
+        console.log('✅ Connected');
         isConnected = true;
-        isReconnecting = false; // Reset reconnecting flag on success
+        isReconnecting = false;
 
         // Listen for ALL incoming messages (including edited ones)
         // NewMessage event catches both new and edited messages in gramJS
         client.addEventHandler(handleIncomingMessage, new NewMessage({}));
 
-        // CRITICAL: Also listen for EDITED messages via Raw events
-        // Bot edits "📥 Downloading..." message and replaces it with video
+        // Listen for edited messages
         client.addEventHandler(async (update) => {
             try {
-                // Check if this is an edit message update
                 if (update instanceof Api.UpdateEditMessage ||
                     update instanceof Api.UpdateEditChannelMessage) {
-                    console.log('🔄 EDIT EVENT detected!');
-
-                    // Get message ID and peer from update
                     const messageId = update.message?.id;
                     const peer = update.message?.peerId;
-
-                    if (!messageId || !peer) {
-                        console.log('⚠️ Edit event missing message ID or peer');
-                        return;
-                    }
+                    if (!messageId || !peer) return;
 
                     try {
-                        // Fetch the FULL message with all details using getMessages
-                        const messages = await client.getMessages(peer, {
-                            ids: [messageId]
-                        });
-
+                        const messages = await client.getMessages(peer, { ids: [messageId] });
                         if (messages && messages.length > 0) {
-                            const fullMessage = messages[0];
-                            console.log('✅ Fetched full message for edit event');
-
-                            // Pass to our handler with full message data
-                            await handleIncomingMessage({ message: fullMessage });
-                        } else {
-                            console.log('⚠️ Could not fetch full message');
+                            await handleIncomingMessage({ message: messages[0] });
                         }
                     } catch (fetchError) {
-                        console.error('❌ Error fetching full message:', fetchError.message);
+                        // Silent fail
                     }
                 }
             } catch (error) {
-                console.error('❌ Error in Raw event handler:', error);
+                // Silent fail
             }
         }, new Raw({}));
 
-        console.log('🎧 Listening to ALL messages (new + edited) from ALL chats');
-
-        // Keep connection alive with ping
         startKeepAlive();
 
     } catch (error) {
-        console.error('❌ Error initializing Telegram:', error);
+        console.error('❌ Connection failed');
         isConnected = false;
-        isReconnecting = false; // Reset flag on error
+        isReconnecting = false;
 
         // Special handling for AUTH_KEY_DUPLICATED
         if (error.message && error.message.includes('AUTH_KEY_DUPLICATED')) {
-            console.error('');
-            console.error('🚨🚨🚨 AUTH_KEY_DUPLICATED ERROR 🚨🚨🚨');
-            console.error('');
-            console.error('This means multiple instances are using the same session!');
-            console.error('');
-            console.error('SOLUTIONS:');
-            console.error('1. Check if another instance of this app is running');
-            console.error('2. Check Render.com dashboard - old deploy might be running');
-            console.error('3. Restart the application completely');
-            console.error('4. If issue persists, regenerate session string:');
-            console.error('   - Run: node generate-session.js');
-            console.error('   - Update TELEGRAM_SESSION in .env');
-            console.error('');
-            console.error('🛑 NOT scheduling reconnect to avoid loop');
-            console.error('');
+            console.error('🚨 AUTH_KEY_DUPLICATED - Check for multiple instances');
             return; // Don't schedule reconnect
         }
 
@@ -207,76 +172,51 @@ function startKeepAlive() {
         if (client && isConnected) {
             try {
                 await client.getMe();
-                console.log('🟢 Connection alive');
+                // Silent - no log
             } catch (error) {
-                console.error('❌ Keep-alive failed:', error);
                 isConnected = false;
                 scheduleReconnect();
             }
         }
-    }, 30000); // Check every 30 seconds
+    }, 60000); // Check every 60 seconds (less frequent)
 }
 
 // Schedule reconnection
 function scheduleReconnect() {
-    // Prevent concurrent reconnection attempts
-    if (isReconnecting) {
-        console.log('⚠️ Reconnection already in progress, skipping...');
-        return;
-    }
-
-    if (reconnectTimeout) {
-        clearTimeout(reconnectTimeout);
-    }
+    if (isReconnecting) return;
+    if (reconnectTimeout) clearTimeout(reconnectTimeout);
 
     reconnectTimeout = setTimeout(async () => {
-        if (isReconnecting) {
-            console.log('⚠️ Reconnection already in progress, aborting...');
-            return;
-        }
+        if (isReconnecting) return;
 
         isReconnecting = true;
-        console.log('🔄 Attempting to reconnect...');
 
         try {
-            // Properly disconnect existing client
             if (client) {
                 try {
-                    console.log('🔌 Disconnecting old client...');
                     await client.disconnect();
-                    await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s
-                    console.log('✅ Old client disconnected');
+                    await new Promise(resolve => setTimeout(resolve, 2000));
                 } catch (disconnectError) {
-                    console.error('⚠️ Error disconnecting:', disconnectError.message);
+                    // Silent
                 }
-                client = null; // Clear client reference
+                client = null;
             }
 
-            // Wait a bit before reconnecting
             await new Promise(resolve => setTimeout(resolve, 3000));
-
-            // Now try to reconnect
             await initTelegram();
 
         } catch (error) {
-            console.error('❌ Reconnection failed:', error.message);
             isReconnecting = false;
 
-            // If AUTH_KEY_DUPLICATED, don't retry automatically
             if (error.message && error.message.includes('AUTH_KEY_DUPLICATED')) {
-                console.error('🚨 AUTH_KEY_DUPLICATED - Multiple instances detected!');
-                console.error('🛑 STOPPING reconnection attempts. Please check:');
-                console.error('   1. No other instances are running');
-                console.error('   2. Session string is not being used elsewhere');
-                console.error('   3. Restart the application');
-                return; // Don't schedule another reconnect
+                console.error('🚨 AUTH_KEY_DUPLICATED - Stop');
+                return;
             }
 
-            // Schedule another reconnect for other errors
             setTimeout(() => {
                 isReconnecting = false;
                 scheduleReconnect();
-            }, 10000); // Wait 10s before retry
+            }, 10000);
         }
     }, 5000);
 }
@@ -287,47 +227,17 @@ async function handleIncomingMessage(event) {
         const message = event.message;
         if (!message) return;
 
-        // DEBUG: Log ALL messages BEFORE filtering
-        console.log('📬 RAW MESSAGE (before filtering):', {
-            hasMedia: !!message.media,
-            mediaType: message.media?.className || 'none',
-            mimeType: message.media?.document?.mimeType || (message.media?.className === 'MessageMediaPhoto' ? 'photo' : 'none'),
-            hasText: !!message.text,
-            textSnippet: message.text?.substring(0, 50) || 'no text'
-        });
-
-        // STEP 1: Check if message is from @Ebenozdownbot ONLY
+        // Check if message is from @Ebenozdownbot ONLY
         const sender = await message.getSender();
         const senderUsername = sender?.username || '';
-        const senderId = sender?.id?.toString() || 'unknown';
+        const targetBotName = botUsername.replace('@', '');
 
-        console.log('👤 Sender info:', {
-            username: senderUsername,
-            id: senderId,
-            botName: sender?.bot ? 'YES' : 'NO'
-        });
+        if (senderUsername !== targetBotName) return; // Ignore other messages
 
-        const targetBotName = botUsername.replace('@', ''); // Remove @ from @Ebenozdownbot
-
-        if (senderUsername !== targetBotName) {
-            // Log WHY we're ignoring this message
-            console.log(`❌ IGNORED: Sender "${senderUsername}" !== "${targetBotName}"`);
-            return;
-        }
-
-        console.log('✅ Message from @Ebenozdownbot:', {
-            isEdited: !!event.isEdited || !!message.edit_date,
-            hasMedia: !!message.media,
-            mediaType: message.media?.className || 'none',
-            hasText: !!message.text,
-            textPreview: message.text?.substring(0, 80) || ''
-        });
-
-        // STEP 2: Check for YouTube format list (text messages with format options)
+        // Check for YouTube format list
         if (message.text) {
             const text = message.text;
 
-            // Detect YouTube format list
             const isFormatList = (
                 (text.includes('📹') || text.includes('🎬')) &&
                 (text.includes('144p') || text.includes('240p') || text.includes('360p') ||
@@ -335,13 +245,9 @@ async function handleIncomingMessage(event) {
             );
 
             if (isFormatList) {
-                console.log('📋 Format list detected!');
                 lastFormatMessage = message;
-
                 const formats = parseYouTubeFormats(text);
-                console.log(`✅ Parsed ${formats.length} formats`);
 
-                // Resolve pending format request
                 for (let [key, resolve] of pendingDownloads.entries()) {
                     resolve({ type: 'formats', formats: formats });
                     pendingDownloads.delete(key);
@@ -355,8 +261,6 @@ async function handleIncomingMessage(event) {
                 const progressMatch = text.match(/(\d+)%/);
                 if (progressMatch) {
                     const progress = parseInt(progressMatch[1]);
-                    console.log(`⏬ Progress: ${progress}%`);
-
                     for (let [key, value] of downloadProgress.entries()) {
                         if (!value.complete) {
                             value.progress = progress;
@@ -368,54 +272,29 @@ async function handleIncomingMessage(event) {
             }
         }
 
-        // STEP 3: Check if we're waiting for a media download
+        // Check if we're waiting for media
         const waitingForMedia = pendingDownloads.size > 0 ||
             Array.from(downloadProgress.values()).some(p => !p.complete);
 
-        // SPECIAL: Log if bot sends media but we're not waiting (helps debug)
-        if (message.media && !waitingForMedia) {
-            console.log('⚠️ Bot sent media but we are not waiting for it:', {
-                mediaType: message.media.className,
-                waitingForMedia: waitingForMedia,
-                pendingDownloads: pendingDownloads.size,
-                activeProgress: Array.from(downloadProgress.values()).filter(p => !p.complete).length
-            });
-        }
-
-        if (!waitingForMedia) {
-            return; // Not expecting any media
-        }
-
-        // STEP 4: Check if this message contains media
-        // Bot can send media in TWO formats:
-        // 1. MessageMediaPhoto - for photos/images (Pinterest, Instagram photos, etc.)
-        // 2. MessageMediaDocument - for videos/audio/images as files
-
-        if (!message.media) {
-            return; // No media at all
-        }
+        if (!waitingForMedia) return;
+        if (!message.media) return;
 
         const mediaClassName = message.media.className;
-        console.log('📬 Media received:', mediaClassName);
 
-        // Handle MessageMediaPhoto (photos/images sent as photos, not documents)
+        // Handle MessageMediaPhoto
         if (mediaClassName === 'MessageMediaPhoto') {
-            console.log('📸 Photo detected! Downloading...');
+            console.log('📸 Downloading image...');
 
             const fileName = `image_${Date.now()}.jpg`;
             const filePath = path.join(__dirname, 'public', 'downloads', fileName);
 
-            // Create downloads directory
             const downloadsDir = path.join(__dirname, 'public', 'downloads');
             if (!fs.existsSync(downloadsDir)) {
                 fs.mkdirSync(downloadsDir, { recursive: true });
             }
 
             try {
-                // Download photo
-                const buffer = await client.downloadMedia(message.media, {
-                    workers: 16
-                });
+                const buffer = await client.downloadMedia(message.media, { workers: 16 });
                 fs.writeFileSync(filePath, buffer, { flag: 'w' });
 
                 const downloadInfo = {
@@ -426,21 +305,18 @@ async function handleIncomingMessage(event) {
                     timestamp: Date.now()
                 };
 
-                console.log('✅ Photo downloaded successfully!');
-                console.log('📤 Sending to frontend:', downloadInfo);
+                console.log('✅ Image ready');
 
-                // Mark image as received (to skip audio if it comes later)
+                // Mark and resolve
                 for (let [key] of pendingDownloads.entries()) {
                     receivedMediaTypes.set(key, 'image');
                 }
 
-                // Resolve ALL pending requests
                 for (let [key, resolve] of pendingDownloads.entries()) {
                     resolve(downloadInfo);
                     pendingDownloads.delete(key);
                 }
 
-                // Update ALL active progress entries
                 for (let [key, value] of downloadProgress.entries()) {
                     if (!value.complete) {
                         value.progress = 100;
@@ -452,128 +328,68 @@ async function handleIncomingMessage(event) {
                     }
                 }
 
-                // Clean up after 5 seconds
                 setTimeout(() => {
                     for (let key of Array.from(receivedMediaTypes.keys())) {
                         receivedMediaTypes.delete(key);
                     }
                 }, 5000);
 
-                return; // Done processing photo
+                return;
 
             } catch (error) {
-                console.error('❌ Photo download failed:', error);
-
-                // Mark all as failed
+                console.error('❌ Image download failed');
                 for (let [key, resolve] of pendingDownloads.entries()) {
                     resolve(null);
                     pendingDownloads.delete(key);
                 }
-
                 return;
             }
         }
 
-        // Handle MessageMediaDocument (videos, audio, images as documents)
-        if (!message.media.document) {
-            console.log('⚠️ Media is not a photo or document, ignoring');
-            return; // Not a document
-        }
+        // Handle MessageMediaDocument
+        if (!message.media.document) return;
 
         const mimeType = message.media.document.mimeType || '';
         const attributes = message.media.document.attributes || [];
 
-        // Detailed logging for debugging
-        console.log('📦 Media details:', {
-            mimeType: mimeType,
-            size: (message.media.document.size / 1024 / 1024).toFixed(2) + ' MB',
-            attributes: attributes.map(attr => attr.className).join(', ')
-        });
-
-        // Check for VIDEO
+        // Detect media type
         const isVideo = attributes.some(attr => attr.className === 'DocumentAttributeVideo') ||
                         mimeType.includes('video');
-
-        // Check for AUDIO (MP3, M4A, OGG, WAV, etc.)
         const isAudio = attributes.some(attr => attr.className === 'DocumentAttributeAudio') ||
-                        mimeType.includes('audio') ||
-                        mimeType.includes('mpeg') ||
-                        mimeType.includes('mp3') ||
-                        mimeType.includes('ogg') ||
-                        mimeType.includes('wav') ||
-                        mimeType.includes('m4a');
-
-        // Check for IMAGE (JPEG, PNG, GIF, WEBP, etc.)
+                        mimeType.includes('audio') || mimeType.includes('mpeg') ||
+                        mimeType.includes('mp3') || mimeType.includes('ogg') ||
+                        mimeType.includes('wav') || mimeType.includes('m4a');
         const isImage = mimeType.includes('image/') ||
                         attributes.some(attr => attr.className === 'DocumentAttributeImageSize');
 
-        console.log('🎯 Media type detection:', {
-            isVideo: isVideo,
-            isAudio: isAudio,
-            isImage: isImage,
-            finalType: isVideo ? 'VIDEO' : (isAudio ? 'AUDIO' : (isImage ? 'IMAGE' : 'UNKNOWN'))
-        });
-
-        // PRIORITY SYSTEM: Video > Image > Audio
-        // Instagram/TikTok often send both video AND audio - we only want video!
+        // Priority: Video > Image > Audio (skip audio if video/image received)
         if (isAudio && !isVideo && !isImage) {
-            // Check if we already received video or image for any pending request
             const alreadyReceivedBetter = Array.from(receivedMediaTypes.values()).some(type =>
                 type === 'video' || type === 'image'
             );
-
-            if (alreadyReceivedBetter) {
-                console.log('🚫 SKIPPING AUDIO - We already received video/image');
-                return;
-            }
-
-            // Check if there are active downloads that might be video
-            if (pendingDownloads.size > 0) {
-                console.log('⚠️ Audio file detected, but waiting for video first...');
-                // Don't process audio immediately, wait a bit for video
-                setTimeout(() => {
-                    // If still waiting after 3 seconds and no video came, this is audio-only content
-                    console.log('💭 No video received, this might be audio-only content');
-                }, 3000);
-                return;
-            }
+            if (alreadyReceivedBetter || pendingDownloads.size > 0) return; // Skip audio
         }
 
-        // Handle edge case: if no media type detected, try to infer from MIME type
+        // Infer type if unknown
         if (!isVideo && !isAudio && !isImage) {
-            console.warn('⚠️ Unknown media type, attempting to infer from MIME type:', mimeType);
-
-            // Check if MIME type suggests it's a media file
             if (mimeType.includes('video') || mimeType.includes('mp4') || mimeType.includes('webm')) {
-                console.log('✅ Inferring as VIDEO based on MIME type');
                 isVideo = true;
             } else if (mimeType.includes('audio') || mimeType.includes('mpeg')) {
-                console.log('✅ Inferring as AUDIO based on MIME type');
                 isAudio = true;
             } else if (mimeType.includes('image')) {
-                console.log('✅ Inferring as IMAGE based on MIME type');
                 isImage = true;
             } else {
-                console.error('❌ Cannot determine media type, ignoring message');
-                console.log('💡 This might be a non-media document. Waiting for actual media...');
-                return; // Not a video, audio, or image
+                return; // Unknown type, ignore
             }
         }
 
-        // If still can't determine, ignore
-        if (!isVideo && !isAudio && !isImage) {
-            console.error('❌ Media type detection failed completely');
-            console.log('💡 Skipping this message and waiting for actual media file...');
-            return; // Not a video, audio, or image
-        }
+        if (!isVideo && !isAudio && !isImage) return;
 
-        // STEP 5: WE HAVE MEDIA FROM @Ebenozdownbot - DOWNLOAD IT!
         const mediaType = isVideo ? 'VIDEO' : (isAudio ? 'AUDIO' : 'IMAGE');
-        console.log(`🎯 ${mediaType} FOUND from @Ebenozdownbot! Starting download...`);
-        console.log(`📦 Size: ${(message.media.document.size / 1024 / 1024).toFixed(2)} MB`);
+        console.log(`🎯 ${mediaType} (${(message.media.document.size / 1024 / 1024).toFixed(1)}MB)`);
 
-        // Get file extension based on mime type
-        let fileExt = '.jpg'; // Default
+        // Get file extension
+        let fileExt = '.jpg';
         let filePrefix = 'media';
 
         if (isVideo) {
@@ -582,7 +398,7 @@ async function handleIncomingMessage(event) {
             else if (mimeType.includes('video/mp4')) fileExt = '.mp4';
             else if (mimeType.includes('video/quicktime')) fileExt = '.mov';
             else if (mimeType.includes('video/x-matroska')) fileExt = '.mkv';
-            else fileExt = '.mp4'; // Default to mp4 for unknown video types
+            else fileExt = '.mp4';
         } else if (isAudio) {
             filePrefix = 'audio';
             if (mimeType.includes('audio/mpeg') || mimeType.includes('mp3')) fileExt = '.mp3';
@@ -592,7 +408,7 @@ async function handleIncomingMessage(event) {
             else if (mimeType.includes('audio/aac')) fileExt = '.aac';
             else if (mimeType.includes('audio/flac')) fileExt = '.flac';
             else if (mimeType.includes('audio/opus')) fileExt = '.opus';
-            else fileExt = '.mp3'; // Default to mp3 for unknown audio types
+            else fileExt = '.mp3';
         } else if (isImage) {
             filePrefix = 'image';
             if (mimeType.includes('image/jpeg') || mimeType.includes('image/jpg')) fileExt = '.jpg';
@@ -601,52 +417,40 @@ async function handleIncomingMessage(event) {
             else if (mimeType.includes('image/webp')) fileExt = '.webp';
             else if (mimeType.includes('image/bmp')) fileExt = '.bmp';
             else if (mimeType.includes('image/svg')) fileExt = '.svg';
-            else fileExt = '.jpg'; // Default to jpg for unknown image types
+            else fileExt = '.jpg';
         }
 
         const fileName = `${filePrefix}_${Date.now()}${fileExt}`;
         const filePath = path.join(__dirname, 'public', 'downloads', fileName);
 
-        console.log('💾 File details:', {
-            fileName: fileName,
-            extension: fileExt,
-            type: filePrefix,
-            path: filePath
-        });
-
-        // Create downloads directory
         const downloadsDir = path.join(__dirname, 'public', 'downloads');
         if (!fs.existsSync(downloadsDir)) {
             fs.mkdirSync(downloadsDir, { recursive: true });
         }
 
         try {
-            // Download the media
             await fastDownloadMedia(client, message.media, filePath);
 
             const downloadInfo = {
                 type: isAudio ? 'audio' : (isImage ? 'image' : 'video'),
-                mediaType: mediaType.toLowerCase(), // 'video', 'audio', or 'image'
+                mediaType: mediaType.toLowerCase(),
                 fileName: fileName,
                 url: `/downloads/${fileName}`,
                 timestamp: Date.now()
             };
 
-            console.log(`✅ ${mediaType} downloaded successfully!`);
-            console.log('📤 Sending to frontend:', downloadInfo);
+            console.log(`✅ Ready`);
 
-            // Mark this media type as received (to skip audio if video comes)
+            // Mark and resolve
             for (let [key] of pendingDownloads.entries()) {
                 receivedMediaTypes.set(key, mediaType.toLowerCase());
             }
 
-            // Resolve ALL pending requests
             for (let [key, resolve] of pendingDownloads.entries()) {
                 resolve(downloadInfo);
                 pendingDownloads.delete(key);
             }
 
-            // Update ALL active progress entries
             for (let [key, value] of downloadProgress.entries()) {
                 if (!value.complete) {
                     value.progress = 100;
@@ -654,11 +458,10 @@ async function handleIncomingMessage(event) {
                     value.success = true;
                     value.videoUrl = downloadInfo.url;
                     value.fileName = downloadInfo.fileName;
-                    value.mediaType = downloadInfo.mediaType; // Add media type
+                    value.mediaType = downloadInfo.mediaType;
                 }
             }
 
-            // Clean up received media types after 5 seconds
             setTimeout(() => {
                 for (let key of Array.from(receivedMediaTypes.keys())) {
                     receivedMediaTypes.delete(key);
@@ -666,14 +469,11 @@ async function handleIncomingMessage(event) {
             }, 5000);
 
         } catch (downloadError) {
-            console.error('❌ Download failed:', downloadError);
-
-            // Clean up partial file
+            console.error('❌ Failed');
             if (fs.existsSync(filePath)) {
                 fs.unlinkSync(filePath);
             }
 
-            // Mark all as failed
             for (let [key, resolve] of pendingDownloads.entries()) {
                 resolve(null);
                 pendingDownloads.delete(key);
@@ -683,13 +483,13 @@ async function handleIncomingMessage(event) {
                 if (!value.complete) {
                     value.complete = true;
                     value.success = false;
-                    value.error = 'Download failed: ' + downloadError.message;
+                    value.error = 'Download failed';
                 }
             }
         }
 
     } catch (error) {
-        console.error('❌ Error handling message:', error);
+        // Silent
     }
 }
 

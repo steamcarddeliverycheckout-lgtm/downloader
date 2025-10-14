@@ -440,8 +440,6 @@
             try {
                 // Check if YouTube URL
                 if (isYouTubeUrl(url)) {
-                    console.log('YouTube URL detected, requesting formats...');
-
                     // Request formats from backend
                     const response = await fetch('/api/youtube/formats', {
                         method: 'POST',
@@ -451,12 +449,9 @@
                         body: JSON.stringify({ url })
                     });
 
-                    console.log('Response status:', response.status);
                     const data = await response.json();
-                    console.log('Response data:', data);
 
                     if (data.success && data.formats) {
-                        console.log(`Received ${data.formats.length} formats:`, data.formats);
                         availableFormats = data.formats;
                         hideLoading();
                         showFormatSelection(data.formats);
@@ -465,8 +460,6 @@
                     }
                 } else {
                     // Non-YouTube URL (Instagram, TikTok, etc.)
-                    console.log('📱 Non-YouTube URL detected, sending to /api/download');
-
                     const response = await fetch('/api/download', {
                         method: 'POST',
                         headers: {
@@ -476,7 +469,6 @@
                     });
 
                     const data = await response.json();
-                    console.log('📦 Response from /api/download:', data);
 
                     if (data.success) {
                         // Show media (video or audio)
@@ -488,7 +480,6 @@
                 }
             } catch (error) {
                 hideLoading();
-                console.error('❌ Download error:', error);
                 showError(error.message || 'An error occurred. Please try again.');
             } finally {
                 document.getElementById('downloadBtn').disabled = false;
@@ -497,17 +488,14 @@
 
         // Show format selection UI
         function showFormatSelection(formats) {
-            console.log('showFormatSelection called with formats:', formats);
             const formatGrid = document.getElementById('formatGrid');
             formatGrid.innerHTML = '';
 
             if (!formats || formats.length === 0) {
-                console.error('No formats provided to showFormatSelection!');
                 return;
             }
 
             formats.forEach((format, index) => {
-                console.log(`Creating button for format ${index}:`, format);
                 const formatBtn = document.createElement('div');
                 formatBtn.className = 'format-btn';
                 formatBtn.onclick = () => selectFormat(index);
@@ -518,9 +506,7 @@
                 formatGrid.appendChild(formatBtn);
             });
 
-            console.log('Setting formatSelection to active...');
             document.getElementById('formatSelection').classList.add('active');
-            console.log('Format selection UI should now be visible');
         }
 
         // Select a format
@@ -567,7 +553,6 @@
 
                 // Get requestId from backend response
                 const data = await response.json();
-                console.log('Download started, requestId:', data.requestId);
 
                 if (data.success && data.requestId) {
                     // Start polling for progress using backend's requestId
@@ -584,9 +569,8 @@
 
         // Poll download progress
         async function pollDownloadProgress(requestId) {
-            console.log('Starting progress polling for requestId:', requestId);
             let pollCount = 0;
-            const maxPolls = 180; // 3 minutes max (180 seconds)
+            const maxPolls = 120; // 2 minutes max (120 polls at 2s each)
 
             const interval = setInterval(async () => {
                 pollCount++;
@@ -600,8 +584,6 @@
 
                     const data = await response.json();
 
-                    console.log(`Poll ${pollCount}: Progress ${data.progress}%, Status: ${data.status}`);
-
                     // Reset error count on successful poll
                     window.pollErrorCount = 0;
 
@@ -610,16 +592,9 @@
 
                         if (data.complete) {
                             clearInterval(interval);
-                            console.log('Download complete!', data);
                             hideProgress();
 
                             if (data.success && data.videoUrl) {
-                                // Show media (video or audio)
-                                console.log('📦 Final data:', {
-                                    videoUrl: data.videoUrl,
-                                    fileName: data.fileName,
-                                    mediaType: data.mediaType
-                                });
                                 showMedia(data.videoUrl, data.fileName, data.mediaType);
                             } else {
                                 showError(data.error || 'Download failed');
@@ -634,8 +609,6 @@
                         showError('Download timeout. Please try again with a smaller file.');
                     }
                 } catch (error) {
-                    console.error('Polling error:', error);
-
                     // Don't stop polling on single error, but count them
                     if (!window.pollErrorCount) window.pollErrorCount = 0;
                     window.pollErrorCount++;
@@ -647,7 +620,7 @@
                         showError('Connection lost. Please try again.');
                     }
                 }
-            }, 1000); // Poll every second
+            }, 2000); // Poll every 2 seconds (reduced from 1s for better performance)
         }
 
         // Update progress bar
@@ -662,8 +635,6 @@
 
         // UI Helper Functions
         function showMedia(url, fileName, mediaType) {
-            console.log('🎬 showMedia called with:', { url, fileName, mediaType });
-
             const videoPlayer = document.getElementById('videoPlayer');
             const audioPlayer = document.getElementById('audioPlayer');
             const imageViewer = document.getElementById('imageViewer');
@@ -681,7 +652,6 @@
             // Primary check: mediaType parameter from backend
             if (mediaType) {
                 mediaCategory = mediaType.toLowerCase();
-                console.log('✅ Media type from backend:', mediaType);
             }
             // Fallback: Check filename extension
             else if (fileName) {
@@ -693,46 +663,33 @@
                 } else if (imageExtensions.test(fileName)) {
                     mediaCategory = 'image';
                 }
-                console.log('⚠️ No mediaType, using filename detection:', fileName, '→', mediaCategory);
             }
 
             if (mediaCategory === 'audio') {
-                // Show audio player
                 audioPlayer.src = url;
                 audioPlayer.style.display = 'block';
                 resultTitle.textContent = '✅ Your Audio is Ready!';
                 downloadLink.textContent = '📥 Download Audio';
-                console.log('🎵 Showing audio player');
 
-                // Error handling for audio player
                 audioPlayer.onerror = function(e) {
-                    console.error('❌ Audio player error:', e);
                     showError('Failed to load audio. Please try downloading instead.');
                 };
             } else if (mediaCategory === 'image') {
-                // Show image viewer
                 imageViewer.src = url;
                 imageViewer.style.display = 'block';
                 resultTitle.textContent = '✅ Your Image is Ready!';
                 downloadLink.textContent = '📥 Download Image';
-                console.log('🖼️ Showing image viewer');
 
-                // Error handling for image viewer
                 imageViewer.onerror = function(e) {
-                    console.error('❌ Image viewer error:', e);
                     showError('Failed to load image. Please try downloading instead.');
                 };
             } else {
-                // Show video player (default)
                 videoPlayer.src = url;
                 videoPlayer.style.display = 'block';
                 resultTitle.textContent = '✅ Your Video is Ready!';
                 downloadLink.textContent = '📥 Download Video';
-                console.log('🎬 Showing video player');
 
-                // Error handling for video player
                 videoPlayer.onerror = function(e) {
-                    console.error('❌ Video player error:', e);
                     showError('Failed to load video. Please try downloading instead.');
                 };
             }
@@ -789,9 +746,9 @@
             }
         });
 
-        // Check status on load and every 30 seconds
+        // Check status on load and every 60 seconds
         checkStatus();
-        setInterval(checkStatus, 30000);
+        setInterval(checkStatus, 60000);
     </script>
 </body>
 </html>
