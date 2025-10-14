@@ -11,9 +11,72 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(cors());
+// Security Configuration - Allowed domains for API access
+const allowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:5000',
+    'http://127.0.0.1:3000',
+    'https://h4k3r.space',  // Replace with your actual domain
+    'https://www.h4k3r.space  // Replace with your actual domain
+];
+
+// CORS Security Middleware - Only allow requests from specific domains
+app.use(cors({
+    origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps, curl, Postman)
+        if (!origin) return callback(null, true);
+
+        // Check if origin is in allowed list
+        if (allowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
+            console.log(`❌ Blocked request from unauthorized origin: ${origin}`);
+            callback(new Error('Not allowed by CORS - Unauthorized domain'));
+        }
+    },
+    credentials: true,
+    methods: ['GET', 'POST'],
+    allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(express.json());
+
+// Rate limiting middleware (prevent abuse)
+const rateLimitMap = new Map();
+const RATE_LIMIT_WINDOW = 60000; // 1 minute
+const MAX_REQUESTS_PER_WINDOW = 10; // Max 10 requests per minute per IP
+
+function rateLimitMiddleware(req, res, next) {
+    const clientIp = req.ip || req.connection.remoteAddress;
+    const now = Date.now();
+
+    if (!rateLimitMap.has(clientIp)) {
+        rateLimitMap.set(clientIp, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
+        return next();
+    }
+
+    const rateLimitData = rateLimitMap.get(clientIp);
+
+    if (now > rateLimitData.resetTime) {
+        // Reset counter after time window
+        rateLimitMap.set(clientIp, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
+        return next();
+    }
+
+    if (rateLimitData.count >= MAX_REQUESTS_PER_WINDOW) {
+        console.log(`⚠️ Rate limit exceeded for IP: ${clientIp}`);
+        return res.status(429).json({
+            error: 'Too many requests. Please try again later.',
+            retryAfter: Math.ceil((rateLimitData.resetTime - now) / 1000)
+        });
+    }
+
+    rateLimitData.count++;
+    next();
+}
+
+// Apply rate limiting to API endpoints
+app.use('/api/', rateLimitMiddleware);
 
 // Telegram Configuration
 const apiId = parseInt(process.env.TELEGRAM_API_ID);
