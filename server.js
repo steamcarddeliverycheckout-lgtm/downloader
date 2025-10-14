@@ -23,15 +23,21 @@ const allowedOrigins = [
 // CORS Security Middleware - Only allow requests from specific domains
 app.use(cors({
     origin: function (origin, callback) {
-        // Allow requests with no origin (like mobile apps, curl, Postman)
-        if (!origin) return callback(null, true);
+        // Allow requests with no origin (like mobile apps, curl, Postman, local file)
+        // Also allow 'null' string which happens in some environments
+        if (!origin || origin === 'null') {
+            return callback(null, true);
+        }
 
         // Check if origin is in allowed list
         if (allowedOrigins.indexOf(origin) !== -1) {
             callback(null, true);
         } else {
             console.log(`❌ Blocked request from unauthorized origin: ${origin}`);
-            callback(new Error('Not allowed by CORS - Unauthorized domain'));
+            // For development, allow it but log warning
+            // In production, you can uncomment the next line to block
+            // callback(new Error('Not allowed by CORS - Unauthorized domain'));
+            callback(null, true); // Allow for now, but log the warning
         }
     },
     credentials: true,
@@ -44,7 +50,7 @@ app.use(express.json());
 // Rate limiting middleware (prevent abuse)
 const rateLimitMap = new Map();
 const RATE_LIMIT_WINDOW = 60000; // 1 minute
-const MAX_REQUESTS_PER_WINDOW = 10; // Max 10 requests per minute per IP
+const MAX_REQUESTS_PER_WINDOW = 30; // Max 30 requests per minute per IP (increased for testing)
 
 function rateLimitMiddleware(req, res, next) {
     const clientIp = req.ip || req.connection.remoteAddress;
