@@ -16,8 +16,8 @@ const allowedOrigins = [
     'http://localhost:3000',
     'http://localhost:5000',
     'http://127.0.0.1:3000',
-    'https://h4k3r.space',  // Replace with your actual domain
-    'https://www.h4k3r.space  // Replace with your actual domain
+    'https://h4k3r.space',
+    'https://www.h4k3r.space'
 ];
 
 // CORS Security Middleware - Only allow requests from specific domains
