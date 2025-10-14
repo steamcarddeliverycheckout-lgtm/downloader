@@ -28,6 +28,7 @@ let reconnectTimeout = null;
 let youtubeFormats = new Map(); // Store YouTube formats by URL
 let downloadProgress = new Map(); // Store download progress by request ID
 let lastFormatMessage = null; // Store the last bot message with format buttons
+let receivedMediaTypes = new Map(); // Track what media types we've already received for each request
 
 // Optimized download function with DC migration support
 async function fastDownloadMedia(client, media, filePath) {
@@ -351,6 +352,11 @@ async function handleIncomingMessage(event) {
                 console.log('✅ Photo downloaded successfully!');
                 console.log('📤 Sending to frontend:', downloadInfo);
 
+                // Mark image as received (to skip audio if it comes later)
+                for (let [key] of pendingDownloads.entries()) {
+                    receivedMediaTypes.set(key, 'image');
+                }
+
                 // Resolve ALL pending requests
                 for (let [key, resolve] of pendingDownloads.entries()) {
                     resolve(downloadInfo);
@@ -368,6 +374,13 @@ async function handleIncomingMessage(event) {
                         value.mediaType = downloadInfo.mediaType;
                     }
                 }
+
+                // Clean up after 5 seconds
+                setTimeout(() => {
+                    for (let [key] of Array.from(receivedMediaTypes.keys())) {
+                        receivedMediaTypes.delete(key);
+                    }
+                }, 5000);
 
                 return; // Done processing photo
 
@@ -423,6 +436,31 @@ async function handleIncomingMessage(event) {
             isImage: isImage,
             finalType: isVideo ? 'VIDEO' : (isAudio ? 'AUDIO' : (isImage ? 'IMAGE' : 'UNKNOWN'))
         });
+
+        // PRIORITY SYSTEM: Video > Image > Audio
+        // Instagram/TikTok often send both video AND audio - we only want video!
+        if (isAudio && !isVideo && !isImage) {
+            // Check if we already received video or image for any pending request
+            const alreadyReceivedBetter = Array.from(receivedMediaTypes.values()).some(type =>
+                type === 'video' || type === 'image'
+            );
+
+            if (alreadyReceivedBetter) {
+                console.log('🚫 SKIPPING AUDIO - We already received video/image');
+                return;
+            }
+
+            // Check if there are active downloads that might be video
+            if (pendingDownloads.size > 0) {
+                console.log('⚠️ Audio file detected, but waiting for video first...');
+                // Don't process audio immediately, wait a bit for video
+                setTimeout(() => {
+                    // If still waiting after 3 seconds and no video came, this is audio-only content
+                    console.log('💭 No video received, this might be audio-only content');
+                }, 3000);
+                return;
+            }
+        }
 
         // Handle edge case: if no media type detected, try to infer from MIME type
         if (!isVideo && !isAudio && !isImage) {
@@ -520,6 +558,11 @@ async function handleIncomingMessage(event) {
             console.log(`✅ ${mediaType} downloaded successfully!`);
             console.log('📤 Sending to frontend:', downloadInfo);
 
+            // Mark this media type as received (to skip audio if video comes)
+            for (let [key] of pendingDownloads.entries()) {
+                receivedMediaTypes.set(key, mediaType.toLowerCase());
+            }
+
             // Resolve ALL pending requests
             for (let [key, resolve] of pendingDownloads.entries()) {
                 resolve(downloadInfo);
@@ -537,6 +580,13 @@ async function handleIncomingMessage(event) {
                     value.mediaType = downloadInfo.mediaType; // Add media type
                 }
             }
+
+            // Clean up received media types after 5 seconds
+            setTimeout(() => {
+                for (let [key] of Array.from(receivedMediaTypes.keys())) {
+                    receivedMediaTypes.delete(key);
+                }
+            }, 5000);
 
         } catch (downloadError) {
             console.error('❌ Download failed:', downloadError);
