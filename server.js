@@ -89,6 +89,7 @@ const apiId = parseInt(process.env.TELEGRAM_API_ID);
 const apiHash = process.env.TELEGRAM_API_HASH;
 const stringSession = new StringSession(process.env.TELEGRAM_SESSION || '');
 const botUsername = process.env.BOT_USERNAME || '@Ebenozdownbot';
+const teraboxBotUsername = process.env.TERABOX_BOT_USERNAME || '@TeraBoxFastDLBot';
 
 let client;
 let pendingDownloads = new Map();
@@ -99,6 +100,8 @@ let youtubeFormats = new Map(); // Store YouTube formats by URL
 let downloadProgress = new Map(); // Store download progress by request ID
 let lastFormatMessage = null; // Store the last bot message with format buttons
 let receivedMediaTypes = new Map(); // Track what media types we've already received for each request
+let teraboxPendingDownloads = new Map(); // Separate map for TeraBox downloads
+let teraboxWebAppUrls = new Map(); // Store Web App URLs from TeraBox bot
 
 // Optimized download function with DC migration support
 async function fastDownloadMedia(client, media, filePath) {
@@ -296,12 +299,41 @@ async function handleIncomingMessage(event) {
         const message = event.message;
         if (!message) return;
 
-        // Check if message is from @Ebenozdownbot ONLY
+        // Check if message is from @Ebenozdownbot OR @TeraBoxFastDLBot
         const sender = await message.getSender();
         const senderUsername = sender?.username || '';
         const targetBotName = botUsername.replace('@', '');
+        const teraboxBotName = teraboxBotUsername.replace('@', '');
 
-        if (senderUsername !== targetBotName) return; // Ignore other messages
+        if (senderUsername !== targetBotName && senderUsername !== teraboxBotName) return; // Ignore other messages
+
+        // Handle TeraBox bot responses
+        if (senderUsername === teraboxBotName) {
+            // Check for Web App button in message
+            if (message.replyMarkup && message.replyMarkup.rows) {
+                for (let row of message.replyMarkup.rows) {
+                    for (let button of row.buttons) {
+                        if (button.url) {
+                            // Found Web App URL
+                            console.log('🌐 TeraBox Web App URL found:', button.url);
+
+                            for (let [key, resolve] of teraboxPendingDownloads.entries()) {
+                                resolve({ type: 'webapp', url: button.url });
+                                teraboxPendingDownloads.delete(key);
+                                break;
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
+
+            // Check if bot sent direct video
+            if (message.media) {
+                console.log('📹 TeraBox sent direct video');
+                // Process as regular download (will be handled below)
+            }
+        }
 
         // Check for YouTube format list
         if (message.text) {
@@ -900,6 +932,88 @@ app.get('/api/youtube/progress/:id', (req, res) => {
             success: false,
             error: 'Request not found'
         });
+    }
+});
+
+// TeraBox endpoint - Handle both direct stream and Web App scenarios
+app.post('/api/terabox', async (req, res) => {
+    const { url } = req.body;
+
+    if (!url) {
+        return res.status(400).json({ error: 'URL is required' });
+    }
+
+    // Check if Telegram is connected
+    if (!client || !isConnected) {
+        return res.status(503).json({ error: 'Telegram client not connected. Please wait...' });
+    }
+
+    try {
+        // Find TeraBox bot entity
+        let bot;
+        let retries = 3;
+        while (retries > 0) {
+            try {
+                bot = await client.getEntity(teraboxBotUsername);
+                break;
+            } catch (error) {
+                console.error(`Failed to get TeraBox bot entity, retries left: ${retries - 1}`);
+                retries--;
+                if (retries === 0) throw error;
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+        }
+
+        // Send TeraBox URL to bot
+        await client.sendMessage(bot, { message: url });
+        console.log(`📤 Sent TeraBox URL to bot: ${url}`);
+
+        // Wait for bot response (Web App URL or direct video)
+        const teraboxPromise = new Promise((resolve) => {
+            const requestId = Date.now();
+            teraboxPendingDownloads.set(requestId, resolve);
+
+            // Timeout after 60 seconds
+            setTimeout(() => {
+                if (teraboxPendingDownloads.has(requestId)) {
+                    teraboxPendingDownloads.delete(requestId);
+                    resolve(null);
+                }
+            }, 60000);
+        });
+
+        const result = await teraboxPromise;
+
+        if (result) {
+            if (result.type === 'webapp') {
+                // Bot sent Web App URL
+                console.log('🌐 TeraBox returned Web App URL');
+                res.json({
+                    success: true,
+                    type: 'webapp',
+                    webappUrl: result.url,
+                    message: 'Open the Web App to stream video'
+                });
+            } else if (result.url) {
+                // Bot sent direct video
+                console.log('📹 TeraBox returned direct video');
+                res.json({
+                    success: true,
+                    type: 'direct',
+                    videoUrl: result.url,
+                    fileName: result.fileName,
+                    mediaType: result.mediaType || 'video'
+                });
+            } else {
+                res.status(500).json({ error: 'Unexpected response from TeraBox bot' });
+            }
+        } else {
+            res.status(408).json({ error: 'Timeout waiting for TeraBox bot response' });
+        }
+
+    } catch (error) {
+        console.error('Error in TeraBox endpoint:', error);
+        res.status(500).json({ error: 'Failed to process TeraBox link: ' + error.message });
     }
 });
 

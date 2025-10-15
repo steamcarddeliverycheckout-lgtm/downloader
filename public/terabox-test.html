@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TeraBox Test - Social Saver</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 2.5rem;
+            max-width: 600px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .subtitle {
+            color: #6b7280;
+            font-size: 0.875rem;
+            margin-bottom: 2rem;
+        }
+
+        .section {
+            margin-bottom: 2rem;
+            padding: 1.5rem;
+            background: #f3f4f6;
+            border-radius: 12px;
+        }
+
+        .section h2 {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: #1f2937;
+        }
+
+        .input-group {
+            margin-bottom: 1rem;
+        }
+
+        label {
+            display: block;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: #374151;
+            margin-bottom: 0.5rem;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            font-family: inherit;
+            transition: all 0.3s;
+        }
+
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #8b5cf6;
+            box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+        }
+
+        button {
+            width: 100%;
+            padding: 0.875rem;
+            border: none;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-size: 1rem;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(139, 92, 246, 0.3);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .result {
+            margin-top: 1rem;
+            padding: 1rem;
+            border-radius: 8px;
+            display: none;
+        }
+
+        .result.success {
+            background: #d1fae5;
+            color: #065f46;
+            border: 2px solid #10b981;
+        }
+
+        .result.error {
+            background: #fee2e2;
+            color: #991b1b;
+            border: 2px solid #ef4444;
+        }
+
+        .result.info {
+            background: #dbeafe;
+            color: #1e40af;
+            border: 2px solid #3b82f6;
+        }
+
+        .result h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .result p {
+            font-size: 0.875rem;
+            margin-bottom: 0.5rem;
+            word-break: break-all;
+        }
+
+        .result a {
+            color: inherit;
+            text-decoration: underline;
+            font-weight: 600;
+        }
+
+        .loader {
+            display: none;
+            text-align: center;
+            padding: 1rem;
+        }
+
+        .loader.active {
+            display: block;
+        }
+
+        .spinner {
+            border: 4px solid #e5e7eb;
+            border-top-color: #8b5cf6;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .examples {
+            font-size: 0.75rem;
+            color: #6b7280;
+            margin-top: 0.5rem;
+        }
+
+        .examples strong {
+            color: #374151;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            background: #dbeafe;
+            color: #1e40af;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .info-box {
+            background: #fffbeb;
+            border: 2px solid #fbbf24;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .info-box h3 {
+            color: #92400e;
+            font-size: 0.875rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+
+        .info-box ul {
+            margin-left: 1.5rem;
+            color: #92400e;
+            font-size: 0.875rem;
+        }
+
+        .info-box li {
+            margin-bottom: 0.25rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1><i class="fas fa-cloud"></i> TeraBox Test Page</h1>
+        <p class="subtitle">Test TeraBox bot integration with @TeraBoxFastDLBot</p>
+
+        <div class="info-box">
+            <h3><i class="fas fa-info-circle"></i> How TeraBox Bot Works:</h3>
+            <ul>
+                <li><strong>Scenario 1:</strong> Bot sends direct video stream (downloaded to server)</li>
+                <li><strong>Scenario 2:</strong> Bot sends Telegram Web App URL (stream in browser)</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <span class="badge"><i class="fas fa-flask"></i> Test API</span>
+            <h2>Test TeraBox Download</h2>
+
+            <div class="input-group">
+                <label for="teraboxUrl">TeraBox URL:</label>
+                <input
+                    type="text"
+                    id="teraboxUrl"
+                    placeholder="Paste TeraBox link here..."
+                    value=""
+                >
+                <p class="examples">
+                    <strong>Examples:</strong> terabox.com/s/xxx, 1024terabox.com/s/xxx, 4funbox.com/s/xxx
+                </p>
+            </div>
+
+            <button id="testBtn" onclick="testTeraBox()">
+                <i class="fas fa-paper-plane"></i>
+                <span>Send to Bot</span>
+            </button>
+
+            <div class="loader" id="loader">
+                <div class="spinner"></div>
+                <p>Waiting for bot response...</p>
+            </div>
+
+            <div class="result" id="result"></div>
+        </div>
+
+        <div class="section">
+            <h2><i class="fas fa-terminal"></i> Response Log</h2>
+            <div id="log" style="background: #1f2937; color: #10b981; padding: 1rem; border-radius: 8px; font-family: 'Courier New', monospace; font-size: 0.75rem; max-height: 300px; overflow-y: auto;">
+                <p style="color: #6b7280;">Waiting for API calls...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE_URL = 'https://saver-bst6.onrender.com';
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const colors = {
+                info: '#3b82f6',
+                success: '#10b981',
+                error: '#ef4444',
+                warning: '#f59e0b'
+            };
+
+            logDiv.innerHTML += `<p style="color: ${colors[type]}; margin: 0.25rem 0;">[${timestamp}] ${message}</p>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        async function testTeraBox() {
+            const url = document.getElementById('teraboxUrl').value.trim();
+            const resultDiv = document.getElementById('result');
+            const loader = document.getElementById('loader');
+            const button = document.getElementById('testBtn');
+
+            if (!url) {
+                alert('Please enter a TeraBox URL');
+                return;
+            }
+
+            // Reset UI
+            resultDiv.style.display = 'none';
+            resultDiv.className = 'result';
+            loader.classList.add('active');
+            button.disabled = true;
+
+            log(`🚀 Sending request to API...`, 'info');
+            log(`URL: ${url}`, 'info');
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/terabox`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+
+                log(`📡 Response received (Status: ${response.status})`, response.ok ? 'success' : 'error');
+
+                const data = await response.json();
+                log(`📦 Response data: ${JSON.stringify(data, null, 2)}`, 'info');
+
+                loader.classList.remove('active');
+
+                if (!response.ok) {
+                    throw new Error(data.error || 'Request failed');
+                }
+
+                if (data.success) {
+                    resultDiv.style.display = 'block';
+
+                    if (data.type === 'webapp') {
+                        // Web App scenario
+                        resultDiv.className = 'result info';
+                        resultDiv.innerHTML = `
+                            <h3><i class="fas fa-external-link-alt"></i> Scenario 2: Web App URL</h3>
+                            <p><strong>Type:</strong> ${data.type}</p>
+                            <p><strong>Web App URL:</strong></p>
+                            <p><a href="${data.webappUrl}" target="_blank">${data.webappUrl}</a></p>
+                            <p style="margin-top: 0.5rem;"><em>${data.message || 'Open the link to stream video'}</em></p>
+                            <button onclick="window.open('${data.webappUrl}', '_blank')" style="margin-top: 0.5rem;">
+                                <i class="fas fa-play"></i> Open Stream
+                            </button>
+                        `;
+                        log(`✅ Success: Got Web App URL`, 'success');
+                        log(`URL: ${data.webappUrl}`, 'success');
+
+                    } else if (data.type === 'direct') {
+                        // Direct video scenario
+                        resultDiv.className = 'result success';
+                        resultDiv.innerHTML = `
+                            <h3><i class="fas fa-video"></i> Scenario 1: Direct Video</h3>
+                            <p><strong>Type:</strong> ${data.type}</p>
+                            <p><strong>File Name:</strong> ${data.fileName}</p>
+                            <p><strong>Media Type:</strong> ${data.mediaType}</p>
+                            <p><strong>Download URL:</strong></p>
+                            <p><a href="${API_BASE_URL}${data.videoUrl}" target="_blank">${data.videoUrl}</a></p>
+                            <button onclick="window.open('${API_BASE_URL}${data.videoUrl}?download=true', '_blank')" style="margin-top: 0.5rem;">
+                                <i class="fas fa-download"></i> Download File
+                            </button>
+                        `;
+                        log(`✅ Success: Got Direct Video`, 'success');
+                        log(`File: ${data.fileName}`, 'success');
+                    }
+                } else {
+                    throw new Error('Unknown response format');
+                }
+
+            } catch (error) {
+                loader.classList.remove('active');
+                resultDiv.style.display = 'block';
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `
+                    <h3><i class="fas fa-exclamation-triangle"></i> Error</h3>
+                    <p>${error.message}</p>
+                `;
+                log(`❌ Error: ${error.message}`, 'error');
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        // Allow Enter key to submit
+        document.getElementById('teraboxUrl').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                testTeraBox();
+            }
+        });
+
+        // Log initial message
+        log('🔧 Test page loaded', 'success');
+        log(`API URL: ${API_BASE_URL}`, 'info');
+    </script>
+</body>
+</html>
