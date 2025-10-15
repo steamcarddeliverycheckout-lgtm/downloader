@@ -309,13 +309,19 @@ async function handleIncomingMessage(event) {
 
         // Handle TeraBox bot responses
         if (senderUsername === teraboxBotName) {
-            // Check for Web App button in message
-            if (message.replyMarkup && message.replyMarkup.rows) {
+            // PRIORITY 1: Check if bot sent direct video/media first
+            if (message.media && message.media.document) {
+                console.log('📹 TeraBox sent direct video - Processing...');
+                // Don't return here, let it process as regular download below
+                // This ensures we download actual video instead of Web App URL
+            }
+            // PRIORITY 2: Only check for Web App URL if NO direct media
+            else if (message.replyMarkup && message.replyMarkup.rows) {
                 for (let row of message.replyMarkup.rows) {
                     for (let button of row.buttons) {
                         if (button.url) {
-                            // Found Web App URL
-                            console.log('🌐 TeraBox Web App URL found:', button.url);
+                            // Found Web App URL (fallback option)
+                            console.log('🌐 TeraBox Web App URL found (no direct video):', button.url);
 
                             for (let [key, resolve] of teraboxPendingDownloads.entries()) {
                                 resolve({ type: 'webapp', url: button.url });
@@ -326,12 +332,6 @@ async function handleIncomingMessage(event) {
                         }
                     }
                 }
-            }
-
-            // Check if bot sent direct video
-            if (message.media) {
-                console.log('📹 TeraBox sent direct video');
-                // Process as regular download (will be handled below)
             }
         }
 
@@ -373,8 +373,9 @@ async function handleIncomingMessage(event) {
             }
         }
 
-        // Check if we're waiting for media
+        // Check if we're waiting for media (including TeraBox downloads)
         const waitingForMedia = pendingDownloads.size > 0 ||
+            teraboxPendingDownloads.size > 0 ||
             Array.from(downloadProgress.values()).some(p => !p.complete);
 
         if (!waitingForMedia) return;
@@ -408,14 +409,21 @@ async function handleIncomingMessage(event) {
 
                 console.log('✅ Image ready');
 
-                // Mark and resolve
+                // Mark and resolve (both regular and TeraBox)
                 for (let [key] of pendingDownloads.entries()) {
                     receivedMediaTypes.set(key, 'image');
                 }
 
+                // Resolve regular downloads
                 for (let [key, resolve] of pendingDownloads.entries()) {
                     resolve(downloadInfo);
                     pendingDownloads.delete(key);
+                }
+
+                // Resolve TeraBox downloads
+                for (let [key, resolve] of teraboxPendingDownloads.entries()) {
+                    resolve(downloadInfo);
+                    teraboxPendingDownloads.delete(key);
                 }
 
                 for (let [key, value] of downloadProgress.entries()) {
@@ -439,9 +447,14 @@ async function handleIncomingMessage(event) {
 
             } catch (error) {
                 console.error('❌ Image download failed');
+                // Resolve all pending downloads with null
                 for (let [key, resolve] of pendingDownloads.entries()) {
                     resolve(null);
                     pendingDownloads.delete(key);
+                }
+                for (let [key, resolve] of teraboxPendingDownloads.entries()) {
+                    resolve(null);
+                    teraboxPendingDownloads.delete(key);
                 }
                 return;
             }
@@ -542,14 +555,21 @@ async function handleIncomingMessage(event) {
 
             console.log(`✅ Ready`);
 
-            // Mark and resolve
+            // Mark and resolve (both regular and TeraBox downloads)
             for (let [key] of pendingDownloads.entries()) {
                 receivedMediaTypes.set(key, mediaType.toLowerCase());
             }
 
+            // Resolve regular downloads
             for (let [key, resolve] of pendingDownloads.entries()) {
                 resolve(downloadInfo);
                 pendingDownloads.delete(key);
+            }
+
+            // Resolve TeraBox downloads (direct video scenario)
+            for (let [key, resolve] of teraboxPendingDownloads.entries()) {
+                resolve(downloadInfo);
+                teraboxPendingDownloads.delete(key);
             }
 
             for (let [key, value] of downloadProgress.entries()) {
@@ -575,9 +595,15 @@ async function handleIncomingMessage(event) {
                 fs.unlinkSync(filePath);
             }
 
+            // Resolve all pending downloads with null
             for (let [key, resolve] of pendingDownloads.entries()) {
                 resolve(null);
                 pendingDownloads.delete(key);
+            }
+
+            for (let [key, resolve] of teraboxPendingDownloads.entries()) {
+                resolve(null);
+                teraboxPendingDownloads.delete(key);
             }
 
             for (let [key, value] of downloadProgress.entries()) {
