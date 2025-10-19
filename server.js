@@ -1088,30 +1088,21 @@ app.post('/api/filetolink', upload.single('file'), async (req, res) => {
             }
         }
 
-        // Read file as buffer
-        const fileBuffer = fs.readFileSync(req.file.path);
-        console.log(`📦 File read successfully: ${fileBuffer.length} bytes`);
+        console.log(`📦 Uploading file from path: ${req.file.path}`);
 
-        // Upload file to bot
-        const uploadedFile = await client.uploadFile({
-            file: fileBuffer,
-            workers: 8
+        // Send file directly using file path - simplest approach
+        await client.sendFile(bot, {
+            file: req.file.path,
+            caption: req.file.originalname,
+            forceDocument: true,
+            attributes: [
+                new Api.DocumentAttributeFilename({
+                    fileName: req.file.originalname
+                })
+            ]
         });
 
-        // Send file to bot with proper attributes
-        await client.sendMessage(bot, {
-            file: new Api.InputMediaUploadedDocument({
-                file: uploadedFile,
-                mimeType: req.file.mimetype || 'application/octet-stream',
-                attributes: [
-                    new Api.DocumentAttributeFilename({
-                        fileName: req.file.originalname
-                    })
-                ]
-            })
-        });
-
-        console.log(`✅ File uploaded to bot, waiting for download link...`);
+        console.log(`✅ File sent to bot, waiting for download link...`);
 
         // Wait for bot response with download link
         const linkPromise = new Promise((resolve) => {
