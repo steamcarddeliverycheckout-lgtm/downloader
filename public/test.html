@@ -460,6 +460,16 @@
 
                 if (!response.ok) {
                     const errorData = await response.json();
+
+                    // Check if bot requires joining channel
+                    if (errorData.requiresJoin) {
+                        const joinMessage = errorData.error + '\n\nClick OK to open the channel.';
+                        if (confirm(joinMessage)) {
+                            window.open(errorData.channelUrl || 'https://t.me/Ashlynn_Repository', '_blank');
+                        }
+                        throw new Error(errorData.error);
+                    }
+
                     throw new Error(errorData.error || 'Upload failed');
                 }
 

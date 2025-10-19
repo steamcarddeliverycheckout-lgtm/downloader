@@ -18,7 +18,8 @@ const allowedOrigins = [
     'http://localhost:5000',
     'http://127.0.0.1:3000',
     'https://h4k3r.space',
-    'https://www.h4k3r.space'
+    'https://www.h4k3r.space',
+    'https://saver-bst6.onrender.com'
 ];
 
 // CORS Security Middleware - Only allow requests from specific domains
@@ -367,10 +368,46 @@ async function handleIncomingMessage(event) {
 
         // Handle FileToLink bot responses
         if (senderUsername === fileToLinkBotName) {
-            // Check if bot sent download link in text
+            // PRIORITY 1: Check for download button in reply markup
+            if (message.replyMarkup && message.replyMarkup.rows) {
+                for (let row of message.replyMarkup.rows) {
+                    for (let button of row.buttons) {
+                        // Look for download button (usually has "Download" text or URL)
+                        if (button.url && (button.text.includes('Download') || button.text.includes('⬇️') || button.url.includes('file'))) {
+                            const downloadLink = button.url;
+                            console.log('✅ Download button link found:', downloadLink);
+
+                            // Resolve pending upload
+                            for (let [key, resolve] of fileToLinkPendingUploads.entries()) {
+                                resolve({ success: true, downloadLink: downloadLink, fullMessage: message.text || '' });
+                                fileToLinkPendingUploads.delete(key);
+                                break;
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
+
+            // PRIORITY 2: Check if bot sent download link in text
             if (message.text) {
                 const text = message.text;
                 console.log('🔗 FileToLink bot response:', text);
+
+                // Check if it's a join requirement message
+                if (text.includes('join') && text.includes('@Ashlynn_Repository')) {
+                    console.log('⚠️ Bot requires joining @Ashlynn_Repository channel');
+                    for (let [key, resolve] of fileToLinkPendingUploads.entries()) {
+                        resolve({
+                            success: false,
+                            error: 'Please join @Ashlynn_Repository channel first',
+                            requiresJoin: true
+                        });
+                        fileToLinkPendingUploads.delete(key);
+                        break;
+                    }
+                    return;
+                }
 
                 // Extract download link (usually starts with http or https)
                 const linkMatch = text.match(/(https?:\/\/[^\s]+)/);
@@ -1031,6 +1068,11 @@ app.post('/api/filetolink', upload.single('file'), async (req, res) => {
     try {
         console.log(`📤 Uploading file to @ARFileToLinkRoBot: ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(2)}MB)`);
 
+        // Verify file exists
+        if (!fs.existsSync(req.file.path)) {
+            throw new Error('File not found after upload');
+        }
+
         // Find FileToLink bot entity
         let bot;
         let retries = 3;
@@ -1046,16 +1088,27 @@ app.post('/api/filetolink', upload.single('file'), async (req, res) => {
             }
         }
 
+        // Read file as buffer
+        const fileBuffer = fs.readFileSync(req.file.path);
+        console.log(`📦 File read successfully: ${fileBuffer.length} bytes`);
+
         // Upload file to bot
         const uploadedFile = await client.uploadFile({
-            file: req.file.path,
+            file: fileBuffer,
             workers: 8
         });
 
-        // Send file to bot
+        // Send file to bot with proper attributes
         await client.sendMessage(bot, {
-            message: req.file.originalname,
-            file: uploadedFile
+            file: new Api.InputMediaUploadedDocument({
+                file: uploadedFile,
+                mimeType: req.file.mimetype || 'application/octet-stream',
+                attributes: [
+                    new Api.DocumentAttributeFilename({
+                        fileName: req.file.originalname
+                    })
+                ]
+            })
         });
 
         console.log(`✅ File uploaded to bot, waiting for download link...`);
@@ -1089,6 +1142,14 @@ app.post('/api/filetolink', upload.single('file'), async (req, res) => {
                 fileName: req.file.originalname,
                 fileSize: req.file.size,
                 message: result.fullMessage
+            });
+        } else if (result && result.requiresJoin) {
+            // Bot requires joining channel
+            res.status(403).json({
+                success: false,
+                error: result.error || 'Please join @Ashlynn_Repository channel first',
+                requiresJoin: true,
+                channelUrl: 'https://t.me/Ashlynn_Repository'
             });
         } else {
             res.status(408).json({ error: 'Timeout waiting for download link from bot' });
