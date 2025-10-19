@@ -7,6 +7,7 @@ const input = require('input');
 const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
+const multer = require('multer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -84,12 +85,39 @@ function rateLimitMiddleware(req, res, next) {
 // Apply rate limiting to API endpoints
 app.use('/api/', rateLimitMiddleware);
 
+// Multer configuration for file uploads
+const uploadDir = path.join(__dirname, 'public', 'uploads');
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, uploadDir);
+    },
+    filename: function (req, file, cb) {
+        // Use original filename with timestamp to avoid conflicts
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        const ext = path.extname(file.originalname);
+        const basename = path.basename(file.originalname, ext);
+        cb(null, basename + '-' + uniqueSuffix + ext);
+    }
+});
+
+const upload = multer({
+    storage: storage,
+    limits: {
+        fileSize: 50 * 1024 * 1024 // 50MB limit
+    }
+});
+
 // Telegram Configuration
 const apiId = parseInt(process.env.TELEGRAM_API_ID);
 const apiHash = process.env.TELEGRAM_API_HASH;
 const stringSession = new StringSession(process.env.TELEGRAM_SESSION || '');
 const botUsername = process.env.BOT_USERNAME || '@Ebenozdownbot';
 const teraboxBotUsername = process.env.TERABOX_BOT_USERNAME || '@TeraBoxFastDLBot';
+const fileToLinkBotUsername = process.env.FILETOLINK_BOT_USERNAME || '@ARFileToLinkRoBot';
 
 let client;
 let pendingDownloads = new Map();
@@ -102,6 +130,7 @@ let lastFormatMessage = null; // Store the last bot message with format buttons
 let receivedMediaTypes = new Map(); // Track what media types we've already received for each request
 let teraboxPendingDownloads = new Map(); // Separate map for TeraBox downloads
 let teraboxWebAppUrls = new Map(); // Store Web App URLs from TeraBox bot
+let fileToLinkPendingUploads = new Map(); // Store pending file-to-link upload requests
 
 // Optimized download function with DC migration support
 async function fastDownloadMedia(client, media, filePath) {
@@ -299,13 +328,14 @@ async function handleIncomingMessage(event) {
         const message = event.message;
         if (!message) return;
 
-        // Check if message is from @Ebenozdownbot OR @TeraBoxFastDLBot
+        // Check if message is from @Ebenozdownbot OR @TeraBoxFastDLBot OR @ARFileToLinkRoBot
         const sender = await message.getSender();
         const senderUsername = sender?.username || '';
         const targetBotName = botUsername.replace('@', '');
         const teraboxBotName = teraboxBotUsername.replace('@', '');
+        const fileToLinkBotName = fileToLinkBotUsername.replace('@', '');
 
-        if (senderUsername !== targetBotName && senderUsername !== teraboxBotName) return; // Ignore other messages
+        if (senderUsername !== targetBotName && senderUsername !== teraboxBotName && senderUsername !== fileToLinkBotName) return; // Ignore other messages
 
         // Handle TeraBox bot responses
         if (senderUsername === teraboxBotName) {
@@ -331,6 +361,30 @@ async function handleIncomingMessage(event) {
                             return;
                         }
                     }
+                }
+            }
+        }
+
+        // Handle FileToLink bot responses
+        if (senderUsername === fileToLinkBotName) {
+            // Check if bot sent download link in text
+            if (message.text) {
+                const text = message.text;
+                console.log('🔗 FileToLink bot response:', text);
+
+                // Extract download link (usually starts with http or https)
+                const linkMatch = text.match(/(https?:\/\/[^\s]+)/);
+                if (linkMatch) {
+                    const downloadLink = linkMatch[0];
+                    console.log('✅ Download link received:', downloadLink);
+
+                    // Resolve pending upload
+                    for (let [key, resolve] of fileToLinkPendingUploads.entries()) {
+                        resolve({ success: true, downloadLink: downloadLink, fullMessage: text });
+                        fileToLinkPendingUploads.delete(key);
+                        break;
+                    }
+                    return;
                 }
             }
         }
@@ -958,6 +1012,97 @@ app.get('/api/youtube/progress/:id', (req, res) => {
             success: false,
             error: 'Request not found'
         });
+    }
+});
+
+// FileToLink endpoint - Upload file to bot and get download link
+app.post('/api/filetolink', upload.single('file'), async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    // Check if Telegram is connected
+    if (!client || !isConnected) {
+        // Clean up uploaded file
+        fs.unlinkSync(req.file.path);
+        return res.status(503).json({ error: 'Telegram client not connected. Please wait...' });
+    }
+
+    try {
+        console.log(`📤 Uploading file to @ARFileToLinkRoBot: ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(2)}MB)`);
+
+        // Find FileToLink bot entity
+        let bot;
+        let retries = 3;
+        while (retries > 0) {
+            try {
+                bot = await client.getEntity(fileToLinkBotUsername);
+                break;
+            } catch (error) {
+                console.error(`Failed to get FileToLink bot entity, retries left: ${retries - 1}`);
+                retries--;
+                if (retries === 0) throw error;
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+        }
+
+        // Upload file to bot
+        const uploadedFile = await client.uploadFile({
+            file: req.file.path,
+            workers: 8
+        });
+
+        // Send file to bot
+        await client.sendMessage(bot, {
+            message: req.file.originalname,
+            file: uploadedFile
+        });
+
+        console.log(`✅ File uploaded to bot, waiting for download link...`);
+
+        // Wait for bot response with download link
+        const linkPromise = new Promise((resolve) => {
+            const requestId = Date.now();
+            fileToLinkPendingUploads.set(requestId, resolve);
+
+            // Timeout after 60 seconds
+            setTimeout(() => {
+                if (fileToLinkPendingUploads.has(requestId)) {
+                    fileToLinkPendingUploads.delete(requestId);
+                    resolve(null);
+                }
+            }, 60000);
+        });
+
+        const result = await linkPromise;
+
+        // Clean up uploaded file after sending to bot
+        if (fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+        }
+
+        if (result && result.success) {
+            console.log(`🔗 Download link received: ${result.downloadLink}`);
+            res.json({
+                success: true,
+                downloadLink: result.downloadLink,
+                fileName: req.file.originalname,
+                fileSize: req.file.size,
+                message: result.fullMessage
+            });
+        } else {
+            res.status(408).json({ error: 'Timeout waiting for download link from bot' });
+        }
+
+    } catch (error) {
+        console.error('Error in filetolink endpoint:', error);
+
+        // Clean up file on error
+        if (req.file && fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+        }
+
+        res.status(500).json({ error: 'Failed to upload file: ' + error.message });
     }
 });
 

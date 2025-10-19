@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File to Link - Upload & Get Download Link</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(10px);
+        }
+
+        h1 {
+            text-align: center;
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+
+        .status {
+            text-align: center;
+            margin-bottom: 20px;
+            padding: 10px;
+            border-radius: 10px;
+            font-size: 14px;
+        }
+
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 15px;
+            padding: 40px;
+            text-align: center;
+            margin-bottom: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: rgba(102, 126, 234, 0.05);
+        }
+
+        .upload-area:hover {
+            border-color: #764ba2;
+            background: rgba(118, 75, 162, 0.1);
+            transform: translateY(-2px);
+        }
+
+        .upload-area.drag-over {
+            background: rgba(102, 126, 234, 0.2);
+            border-color: #764ba2;
+        }
+
+        .upload-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+
+        .upload-text {
+            color: #667eea;
+            font-size: 16px;
+            font-weight: 500;
+            margin-bottom: 5px;
+        }
+
+        .upload-subtext {
+            color: #999;
+            font-size: 12px;
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        .file-info {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .file-info.show {
+            display: block;
+        }
+
+        .file-name {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .file-size {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 10px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-primary:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .progress-container {
+            display: none;
+            margin-bottom: 20px;
+        }
+
+        .progress-container.show {
+            display: block;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 30px;
+            background: #e9ecef;
+            border-radius: 15px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .progress-text {
+            text-align: center;
+            color: #667eea;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .result-container {
+            display: none;
+            margin-top: 20px;
+        }
+
+        .result-container.show {
+            display: block;
+        }
+
+        .result-box {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 15px;
+        }
+
+        .result-title {
+            color: #155724;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        .download-link {
+            background: white;
+            padding: 12px;
+            border-radius: 8px;
+            word-break: break-all;
+            font-size: 14px;
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn-group .btn {
+            margin-bottom: 0;
+        }
+
+        .btn-secondary {
+            background: white;
+            color: #667eea;
+            border: 2px solid #667eea;
+        }
+
+        .btn-secondary:hover {
+            background: #667eea;
+            color: white;
+        }
+
+        .error-box {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            border-radius: 10px;
+            padding: 15px;
+            color: #721c24;
+            margin-top: 15px;
+            display: none;
+        }
+
+        .error-box.show {
+            display: block;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 20px;
+            }
+
+            h1 {
+                font-size: 24px;
+            }
+
+            .upload-area {
+                padding: 30px 20px;
+            }
+
+            .btn-group {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📤 File to Link</h1>
+        <p class="subtitle">Upload any file and get a download link via @ARFileToLinkRoBot</p>
+
+        <div id="statusIndicator" class="status disconnected">
+            ⚠️ Checking backend status...
+        </div>
+
+        <div class="upload-area" id="uploadArea">
+            <div class="upload-icon">📁</div>
+            <div class="upload-text">Click to select a file or drag and drop</div>
+            <div class="upload-subtext">Maximum file size: 50MB</div>
+        </div>
+
+        <input type="file" id="fileInput" accept="*/*">
+
+        <div class="file-info" id="fileInfo">
+            <div class="file-name" id="fileName"></div>
+            <div class="file-size" id="fileSize"></div>
+        </div>
+
+        <button class="btn btn-primary" id="uploadBtn" disabled>
+            Upload & Get Link
+        </button>
+
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill">0%</div>
+            </div>
+            <div class="progress-text" id="progressText">Uploading...</div>
+        </div>
+
+        <div class="result-container" id="resultContainer">
+            <div class="result-box">
+                <div class="result-title">✅ Upload Successful!</div>
+                <div class="download-link" id="downloadLink"></div>
+                <div class="btn-group">
+                    <button class="btn btn-secondary" id="copyBtn">📋 Copy Link</button>
+                    <button class="btn btn-primary" id="openBtn">🔗 Open Link</button>
+                </div>
+            </div>
+            <button class="btn btn-secondary" id="resetBtn">Upload Another File</button>
+        </div>
+
+        <div class="error-box" id="errorBox"></div>
+    </div>
+
+    <script>
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const fileInfo = document.getElementById('fileInfo');
+        const fileName = document.getElementById('fileName');
+        const fileSize = document.getElementById('fileSize');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+        const resultContainer = document.getElementById('resultContainer');
+        const downloadLink = document.getElementById('downloadLink');
+        const copyBtn = document.getElementById('copyBtn');
+        const openBtn = document.getElementById('openBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const errorBox = document.getElementById('errorBox');
+        const statusIndicator = document.getElementById('statusIndicator');
+
+        let selectedFile = null;
+        let currentDownloadLink = '';
+
+        // Check backend status
+        async function checkBackendStatus() {
+            try {
+                const response = await fetch('/api/health');
+                const data = await response.json();
+
+                if (data.telegram === 'connected') {
+                    statusIndicator.className = 'status connected';
+                    statusIndicator.textContent = '✅ Backend connected - Ready to upload';
+                } else {
+                    statusIndicator.className = 'status disconnected';
+                    statusIndicator.textContent = '⚠️ Backend connecting... Please wait';
+                }
+            } catch (error) {
+                statusIndicator.className = 'status disconnected';
+                statusIndicator.textContent = '❌ Cannot connect to backend';
+            }
+        }
+
+        // Check status on load and every 30 seconds
+        checkBackendStatus();
+        setInterval(checkBackendStatus, 30000);
+
+        // Upload area click
+        uploadArea.addEventListener('click', () => {
+            fileInput.click();
+        });
+
+        // File selection
+        fileInput.addEventListener('change', (e) => {
+            handleFileSelect(e.target.files[0]);
+        });
+
+        // Drag and drop
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('drag-over');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('drag-over');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('drag-over');
+            handleFileSelect(e.dataTransfer.files[0]);
+        });
+
+        function handleFileSelect(file) {
+            if (!file) return;
+
+            // Check file size (50MB limit)
+            if (file.size > 50 * 1024 * 1024) {
+                showError('File size exceeds 50MB limit');
+                return;
+            }
+
+            selectedFile = file;
+            fileName.textContent = '📄 ' + file.name;
+            fileSize.textContent = formatFileSize(file.size);
+            fileInfo.classList.add('show');
+            uploadBtn.disabled = false;
+            errorBox.classList.remove('show');
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+        }
+
+        // Upload button
+        uploadBtn.addEventListener('click', async () => {
+            if (!selectedFile) return;
+
+            uploadBtn.disabled = true;
+            errorBox.classList.remove('show');
+            progressContainer.classList.add('show');
+            progressFill.style.width = '10%';
+            progressFill.textContent = '10%';
+            progressText.textContent = 'Uploading file to bot...';
+
+            const formData = new FormData();
+            formData.append('file', selectedFile);
+
+            try {
+                // Simulate progress
+                let fakeProgress = 10;
+                const progressInterval = setInterval(() => {
+                    if (fakeProgress < 90) {
+                        fakeProgress += 5;
+                        progressFill.style.width = fakeProgress + '%';
+                        progressFill.textContent = fakeProgress + '%';
+                    }
+                }, 500);
+
+                const response = await fetch('/api/filetolink', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                clearInterval(progressInterval);
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Upload failed');
+                }
+
+                const data = await response.json();
+
+                // Complete progress
+                progressFill.style.width = '100%';
+                progressFill.textContent = '100%';
+                progressText.textContent = 'Upload complete!';
+
+                setTimeout(() => {
+                    progressContainer.classList.remove('show');
+                    showResult(data.downloadLink);
+                }, 1000);
+
+            } catch (error) {
+                progressContainer.classList.remove('show');
+                showError(error.message || 'Failed to upload file');
+                uploadBtn.disabled = false;
+            }
+        });
+
+        function showResult(link) {
+            currentDownloadLink = link;
+            downloadLink.textContent = link;
+            resultContainer.classList.add('show');
+        }
+
+        function showError(message) {
+            errorBox.textContent = '❌ ' + message;
+            errorBox.classList.add('show');
+        }
+
+        // Copy button
+        copyBtn.addEventListener('click', () => {
+            navigator.clipboard.writeText(currentDownloadLink).then(() => {
+                copyBtn.textContent = '✅ Copied!';
+                setTimeout(() => {
+                    copyBtn.textContent = '📋 Copy Link';
+                }, 2000);
+            });
+        });
+
+        // Open button
+        openBtn.addEventListener('click', () => {
+            window.open(currentDownloadLink, '_blank');
+        });
+
+        // Reset button
+        resetBtn.addEventListener('click', () => {
+            selectedFile = null;
+            fileInput.value = '';
+            fileInfo.classList.remove('show');
+            resultContainer.classList.remove('show');
+            errorBox.classList.remove('show');
+            uploadBtn.disabled = true;
+            progressFill.style.width = '0%';
+        });
+    </script>
+</body>
+</html>
